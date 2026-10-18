@@ -38,6 +38,13 @@ var _storm: ColorRect
 var _storm_mat: ShaderMaterial
 var lightning: LightningFx
 var _rev_labels: Array[Label] = []
+var _wind_labels: Array[Label] = []      # per layer: arrows and speed at the right edge (bigger = faster)
+var _wind_shown := PackedInt32Array()
+var _pv_dots: MultiMeshInstance2D        # drift preview: the balloon's predicted path
+var _pv_ghosts: MultiMeshInstance2D      # ...and where each hazard will be at the end of it
+var _pv_dot_buf := PackedFloat32Array()
+var _pv_ghost_buf := PackedFloat32Array()
+var _pv_n_ghosts := 0
 var _rev_shown := PackedInt32Array()
 var _tk: MultiMeshInstance2D
 var _cn: MultiMeshInstance2D
@@ -146,7 +153,38 @@ func _ready() -> void:
 		l.visible = false
 		add_child(l)
 		_rev_labels.append(l)
+	# the wind of every layer, constant: arrows (1-4 by strength) and px/s at the right edge
+	_wind_shown.resize(Lanes.MAX_LANES)
+	for i in Lanes.MAX_LANES:
+		var wl := Ui.label("", 28, HORIZONTAL_ALIGNMENT_RIGHT, Vector2(Lanes.W - 190.0, 0), Vector2(182, 40))
+		wl.modulate = Color(1, 1, 1, 0.8)
+		wl.visible = false
+		add_child(wl)
+		_wind_labels.append(wl)
+	# the drift preview: dots along the predicted path, a ring per hazard where it will be
+	var dm := ShapeMesh.new()
+	dm.circle(Vector2.ZERO, 1.0, Color.WHITE, false, 0.0, 0.0, 8)
+	_pv_dots = _make_mm(dm.build(), Balloon.PRED_N, false, null, HZ_STRIDE)
+	_pv_dots.modulate = Color(1, 1, 1, 0.6)
+	_pv_dot_buf.resize(Balloon.PRED_N * HZ_STRIDE)
+	var gm := ShapeMesh.new()
+	var ring: Array = []
+	for a in 17:
+		ring.append(Vector2(cos(TAU * float(a) / 16.0), sin(TAU * float(a) / 16.0)))
+	gm.polyline(ring, 0.1, Color.WHITE)
+	_pv_ghosts = _make_mm(gm.build(), Lanes.MAX_HAZ, false, null, HZ_STRIDE)
+	_pv_ghosts.modulate = Color(1, 1, 1, 0.4)
+	_pv_ghost_buf.resize(Lanes.MAX_HAZ * HZ_STRIDE)
 	_built = true
+
+## "<<< 120" / ">>> 120": arrows by strength (one per 45 px/s), the speed in px/s rounded to 5. A layer at rest shows "0".
+static func wind_text(w: float) -> String:
+	var mag := int(round(absf(w) / 5.0)) * 5
+	if mag == 0:
+		return "0"
+	var n := clampi(1 + int(absf(w) / 45.0), 1, 4)
+	var a := ">>>>".substr(0, n) if w > 0.0 else "<<<<".substr(0, n)
+	return "%s %d" % [a, mag]
 
 func _make_mm(mesh: Mesh, count: int, colors: bool, mat: Material, _stride: int = WIND_STRIDE) -> MultiMeshInstance2D:
 	var mm := MultiMesh.new()
@@ -298,6 +336,13 @@ func on_setup() -> void:
 		_rev_shown[i] = -1
 		if on_rev:
 			_rev_labels[i].position = Vector2(8.0, Lanes.BAND_BOTTOM - (float(i) + 0.5) * L.lane_h - 20.0)
+	for i in Lanes.MAX_LANES:   # the wind label of every layer
+		var wl := _wind_labels[i]
+		wl.visible = i < L.n_lanes
+		_wind_shown[i] = -9999
+		if i < L.n_lanes:
+			wl.position = Vector2(Lanes.W - 190.0, Lanes.BAND_BOTTOM - (float(i) + 0.5) * L.lane_h - 22.0)
+			wl.add_theme_font_size_override("font_size", 22 + int(clampf(absf(L.lane_base[i]) / 170.0, 0.0, 1.0) * 14.0))
 	# haze
 	_haze.visible = L.haze_on
 	if L.haze_on:
@@ -335,6 +380,43 @@ func _mesh_for(k: int, j: int) -> int:
 	if k == Lanes.BIRD and (lanes.region == 2 and not lanes.showcase or (lanes.showcase and j % 2 == 0)):
 		return HazardMeshes.VULTURE
 	return k
+
+# ---- the drift preview ----
+
+func _update_preview(L: Lanes) -> void:
+	var bal := L.preview_balloon
+	if bal == null:
+		_pv_dots.visible = false
+		_pv_ghosts.visible = false
+		return
+	_pv_dots.visible = true
+	_pv_ghosts.visible = true
+	for k in Balloon.PRED_N:
+		var b := k * HZ_STRIDE
+		var r := 4.0 + 5.0 * float(k) / float(Balloon.PRED_N - 1)   # growing: the end of the path stands out
+		_pv_dot_buf[b] = r
+		_pv_dot_buf[b + 3] = bal.pred[k].x
+		_pv_dot_buf[b + 5] = r
+		_pv_dot_buf[b + 7] = bal.pred[k].y + 20.0 * bal.s()   # (the path of the basket's middle)
+	_pv_dots.multimesh.buffer = _pv_dot_buf
+	_pv_dots.multimesh.visible_instance_count = Balloon.PRED_N
+	var n := 0
+	for i in L.n_lanes:
+		var k := L.lane_kind[i]
+		if k < 0:
+			continue
+		var sc := L.lane_scale[i]
+		var hx := float(Lanes.KIND_HX[k]) * sc
+		var hy := float(Lanes.KIND_HY[k]) * sc
+		for j in L.lane_count[i]:
+			var b := n * HZ_STRIDE
+			_pv_ghost_buf[b] = hx
+			_pv_ghost_buf[b + 3] = L.hazard_x_in(i, j, Tuning.preview_seconds)
+			_pv_ghost_buf[b + 5] = hy
+			_pv_ghost_buf[b + 7] = L.hz_y[i * Lanes.MAX_PER_LANE + j]
+			n += 1
+	_pv_ghosts.multimesh.buffer = _pv_ghost_buf
+	_pv_ghosts.multimesh.visible_instance_count = n
 
 # ---- every frame: positions only ----
 
@@ -421,6 +503,12 @@ func update(dt: float) -> void:
 			if secs != _rev_shown[i]:
 				_rev_shown[i] = secs
 				_rev_labels[i].text = "<> %d" % secs
+	for i in L.n_lanes:   # (constant winds: the text only changes in a reversing layer)
+		var wq := int(round(L.lane_wind[i] / 5.0))
+		if wq != _wind_shown[i]:
+			_wind_shown[i] = wq
+			_wind_labels[i].text = wind_text(L.lane_wind[i])
+	_update_preview(L)
 	lightning.tick()
 	fx.tick()
 	if Lanes.prof_on:

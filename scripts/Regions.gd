@@ -5,7 +5,7 @@ extends RefCounted
 
 const COUNT := 4
 const NAMES := ["Countryside", "Alps", "Sahara", "Himalayas"]
-const BLURB := ["gentle winds", "gusty layers, eagles, cable cars", "thermals and sand haze", "thin air and a jet stream"]
+const BLURB := ["gentle winds", "strong steady winds, eagles, cable cars", "thermals and sand haze", "thin air and a jet stream"]
 ## Hazard kinds (Lanes.BIRD...) in the order they are introduced across a region's six Flights.
 const KINDS := [[0, 1, 2, 3], [4, 5, 0, 1], [0, 6, 2, 3], [4, 7, 0, 3]]
 ## Sky bands from the lowest layer to the highest, the strip above the goal, ground and scenery colours.
@@ -18,7 +18,6 @@ const PEAK_A := [Color(0.26, 0.5, 0.36), Color(0.45, 0.52, 0.66), Color(0.88, 0.
 const PEAK_B := [Color(0.2, 0.42, 0.34), Color(0.36, 0.43, 0.58), Color(0.8, 0.58, 0.3), Color(0.26, 0.22, 0.46)]
 const SNOW := [Color(1, 1, 1, 0.0), Color(1, 1, 1, 1), Color(1, 1, 1, 0.0), Color(0.95, 0.97, 1.0, 1)]   # alpha 0 = no snow cap
 ## Mechanics.
-const GUSTY := [false, true, false, false]
 const THERMALS := [false, false, true, false]
 const HAZE := [false, false, true, false]
 const THIN_AIR := [false, false, false, true]

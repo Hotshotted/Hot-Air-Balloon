@@ -11,6 +11,8 @@ const H := 1920.0
 const GROUND_Y := 1700.0
 const BAND_TOP := 330.0          # top of the highest layer
 const BAND_BOTTOM := 1640.0      # bottom of the lowest layer
+const ITEM_MIN_X := 110.0        # pickups stay on the screen
+const HAZ_MAX_SPEED := 260.0     # hazards never outrun this (px/s), so every gap stays passable
 const GOAL_Y := 310.0            # the balloon's centre above this line clears the level
 const MARGIN := 160.0            # hazards live on a ring this far past each screen edge
 const RING := W + 2.0 * MARGIN
@@ -49,9 +51,9 @@ const FX_BLACK := Color(0, 0, 0, 1)
 # ---- Level state ----
 var n_lanes := 5
 var lane_h := 0.0
-var lane_wind := PackedFloat32Array()    # px/s right now, sign = direction (gusts make it change)
-var lane_base := PackedFloat32Array()    # the layer's steady wind
-var lane_gph := PackedFloat32Array()     # gust phase
+var lane_wind := PackedFloat32Array()    # px/s right now, sign = direction: constant, except in a reversing layer
+var lane_base := PackedFloat32Array()    # the layer's steady wind (a reversing layer swings between +- this)
+var lane_gph := PackedFloat32Array()     # kite beat phase
 var lane_vel := PackedFloat32Array()     # px/s of this layer's hazards
 var lane_kind := PackedInt32Array()      # hazard kind, -1 = none
 var lane_count := PackedInt32Array()
@@ -69,6 +71,7 @@ var cn_x := PackedFloat32Array()      # floating coins (they count toward a Flig
 var cn_y := PackedFloat32Array()
 var cn_on := PackedByteArray()
 var _order := PackedInt32Array()
+var _gap_used := PackedInt32Array()     # bit mask per layer: the gaps that already hold an item
 var _items := PackedInt32Array()        # items (tank / coin / star) already placed in each layer
 var _base_x := PackedFloat32Array()     # where items go in a layer with no hazards
 # --- this leg's recipe: goal and twists ---
@@ -114,7 +117,6 @@ var th_x := PackedFloat32Array()         # thermals (Sahara): columns of updraft
 var th_dx := PackedFloat32Array()
 var th_count := 0
 var region := 0
-var gusty := false
 var haze_on := false
 var thin_air := false
 var jet := false
@@ -123,6 +125,7 @@ var _fx_next := 0
 var last_hit_kind := 0
 var level := 1.0
 var rng := RandomNumberGenerator.new()
+var preview_balloon: Balloon     # set while the drift preview is on: LaneRender draws its predicted path and the hazards' ghosts
 var showcase := false            # pre-warm: every shape on screen at once
 ## ?perf / tests/perf_profile.gd: microseconds spent per frame in each part of the Lanes work, summed over frames.
 static var prof_on := false
@@ -158,6 +161,7 @@ func _ready() -> void:
 	cn_on.resize(MAX_COINS)
 	_order.resize(MAX_LANES)
 	_items.resize(MAX_LANES)
+	_gap_used.resize(MAX_LANES)
 	_base_x.resize(MAX_LANES)
 	lane_beat.resize(MAX_LANES)
 	lane_rev.resize(MAX_LANES)
@@ -247,7 +251,6 @@ func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0, rec:
 	level = lv
 	showcase = show
 	region = 2 if show else clampi(reg, 0, Regions.COUNT - 1)
-	gusty = show or Regions.GUSTY[region]
 	haze_on = show or Regions.HAZE[region]
 	thin_air = Regions.THIN_AIR[region]
 	jet = show or Regions.JET[region]
@@ -273,6 +276,7 @@ func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0, rec:
 	lane_beat.fill(0.0)
 	lane_rev.fill(0.0)
 	_items.fill(0)
+	_gap_used.fill(0)
 	for i in MAX_LANES:
 		_base_x[i] = rng.randf_range(100.0, W - 100.0)
 	if rec != null and not show:
@@ -308,6 +312,8 @@ func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0, rec:
 		var sgn := -prev if rng.randf() < 0.75 else prev
 		prev = sgn
 		var mag := minf(wind_for(lv) * wmult + rng.randf() * Tuning.wind_variation, Tuning.wind_max)
+		if region == 1:   # Alps: strong, but steady
+			mag = minf(mag * Tuning.alps_wind_mult, Tuning.wind_max)
 		var jet_lane: bool = jet and i == n_lanes - 1   # Himalayas: a fast jet stream on top
 		if jet_lane:
 			mag = Tuning.jet_wind
@@ -339,7 +345,7 @@ func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0, rec:
 		lane_kind[i] = k
 		var sc := Tuning.hazard_scale * clampf(lane_h / 230.0, 0.7, 1.15)
 		lane_scale[i] = sc
-		lane_vel[i] = lane_wind[i] * KIND_SPEED[k]
+		lane_vel[i] = _haz_vel(lane_wind[i], k)
 		lane_amp[i] = maxf(lane_h * 0.5 - float(KIND_HY[k]) * sc - 6.0, 0.0) * KIND_BOB[k]
 		# As many hazards as asked for, but never more than leave every gap passable.
 		var hw := 2.0 * float(KIND_HX[k]) * sc
@@ -495,13 +501,30 @@ func _slot_x(i: int) -> float:
 	_items[i] = k + 1
 	var c := lane_count[i]
 	var x := 0.0
-	if c == 0:
-		x = _base_x[i] + 300.0 * float(k)
+	if c == 0:   # (spread over the screen's width, so two items never pile up at its edge)
+		return ITEM_MIN_X + fposmod(_base_x[i] - ITEM_MIN_X + 300.0 * float(k), W - 2.0 * ITEM_MIN_X)
 	elif k < c:
-		x = _gap_center(i, k)
+		# the first free gap whose middle is on the screen (items hang still, so they must be where the balloon can go)
+		var pick := -1
+		var fallback := -1   # a free gap that is off the screen
+		for jj in c:
+			var gj := (k + jj) % c
+			if (_gap_used[i] >> gj) & 1 == 1:
+				continue
+			var gx := -MARGIN + fposmod(_gap_center(i, gj) + MARGIN, RING)
+			if gx >= ITEM_MIN_X and gx <= W - ITEM_MIN_X:
+				pick = gj
+				break
+			if fallback < 0:
+				fallback = gj
+		if pick < 0:
+			pick = fallback if fallback >= 0 else k
+		_gap_used[i] |= 1 << pick
+		x = _gap_center(i, pick)
 	else:
 		x = _gap_center(i, 0) + 260.0 * float(k - c + 1)
-	return -MARGIN + fposmod(x + MARGIN, RING)
+	x = -MARGIN + fposmod(x + MARGIN, RING)
+	return clampf(x, ITEM_MIN_X, W - ITEM_MIN_X)
 
 ## Centre (on the ring) of the rank-th widest gap between the hazards of a layer (rank 0 = widest).
 func _gap_center(i: int, rank: int) -> float:
@@ -526,6 +549,15 @@ func _gap_center(i: int, rank: int) -> float:
 		used |= 1 << best_j
 	return hz_x[i * MAX_PER_LANE + best_j] + best_gap * 0.5
 
+## A hazard kind's speed in a layer with this wind.
+func _haz_vel(w: float, k: int) -> float:
+	return clampf(w * float(KIND_SPEED[k]), -HAZ_MAX_SPEED, HAZ_MAX_SPEED)
+
+## Where hazard j of layer i will be in `t` seconds (it keeps its speed; the bob is ignored): for the drift preview.
+func hazard_x_in(i: int, j: int, t: float) -> float:
+	var x := hz_x[i * MAX_PER_LANE + j] + lane_vel[i] * t
+	return -MARGIN + fposmod(x + MARGIN, RING)
+
 func _lane_cy(i: int) -> float:
 	return BAND_BOTTOM - (float(i) + 0.5) * lane_h
 
@@ -545,14 +577,10 @@ func update(dt: float) -> void:
 	_t += dt
 	for i in n_lanes:
 		var k0 := lane_kind[i]
-		if gusty or lane_rev[i] > 0.0:   # the layer's wind swells and fades (Alps) and / or flips on a timer
-			var w := lane_base[i]
-			if gusty:
-				w *= 1.0 + Tuning.gust_amp * sin(_t * Tuning.gust_rate + lane_gph[i])
-			if lane_rev[i] > 0.0:
-				w *= clampf(3.0 * sin(PI * (_t + lane_rev_off[i]) / lane_rev[i]), -1.0, 1.0)
+		if lane_rev[i] > 0.0:   # the layer's wind flips on a timer (the countdown is on screen)
+			var w := lane_base[i] * clampf(3.0 * sin(PI * (_t + lane_rev_off[i]) / lane_rev[i]), -1.0, 1.0)
 			lane_wind[i] = w
-			lane_vel[i] = w * (float(KIND_SPEED[k0]) if k0 >= 0 else 1.0)
+			lane_vel[i] = _haz_vel(w, k0) if k0 >= 0 else w
 		var k := lane_kind[i]
 		for j in lane_count[i]:
 			var idx3 := i * MAX_PER_LANE + j
@@ -566,31 +594,13 @@ func update(dt: float) -> void:
 				hz_y[idx3] = _lane_cy(i) - lane_amp[i] * 0.45 + lane_amp[i] * 0.9 * Tuning.kite_dip * _dip(fposmod(_t / lane_beat[i] + lane_gph[i] / TAU, 1.0))
 			else:
 				hz_y[idx3] = _lane_cy(i) + sin(_t * float(KIND_RATE[k]) + hz_phase[idx3]) * lane_amp[i]
-		if pk_on[i] == 1 or showcase:
-			var px := pk_x[i] + lane_vel[i] * dt
-			if px >= W + MARGIN:
-				px -= RING
-			elif px < -MARGIN:
-				px += RING
-			pk_x[i] = px
+		if pk_on[i] == 1 or showcase:   # pickups hang still in the air (they only bob): the balloon sweeps past them
 			pk_y[i] = _lane_cy(i) + sin(_t * 2.0 + float(i)) * minf(lane_h * 0.18, 24.0)
 	for i in n_lanes:
 		if cn_on[i] == 1 or showcase:
-			var cx := cn_x[i] + lane_vel[i] * dt
-			if cx >= W + MARGIN:
-				cx -= RING
-			elif cx < -MARGIN:
-				cx += RING
-			cn_x[i] = cx
 			cn_y[i] = _lane_cy(i) + sin(_t * 2.3 + float(i) * 1.7) * minf(lane_h * 0.18, 24.0)
 	for q in gs_count:
 		if gs_on[q] == 1 or showcase:
-			var sx := gs_x[q] + lane_vel[gs_lane[q]] * dt
-			if sx >= W + MARGIN:
-				sx -= RING
-			elif sx < -MARGIN:
-				sx += RING
-			gs_x[q] = sx
 			gs_y[q] = _lane_cy(gs_lane[q]) + sin(_t * 2.1 + float(q) * 1.3) * minf(lane_h * 0.18, 24.0)
 	if ship_on:   # the airship drifts to and fro over the top
 		ship_x += ship_dir * Tuning.airship_speed * dt
@@ -783,10 +793,10 @@ func ship_contact(balloon: Balloon) -> int:
 	if top_y < hull_bottom and balloon.position.y > SHIP_DECK_Y:
 		# below / inside the hull: pushed back out underneath it
 		balloon.position.y = hull_bottom + 56.0 * s
-		balloon.rise = minf(balloon.rise, 0.0)
+		balloon.bump_down()
 		return 0
 	if basket_y >= SHIP_DECK_Y and balloon.position.y <= SHIP_DECK_Y and absf(dx) <= half:
-		return 1 if -balloon.rise <= Tuning.land_speed else 2
+		return 1 if balloon.descent_speed() <= Tuning.land_speed else 2
 	return 0
 
 ## A pooled burst of square sparks.

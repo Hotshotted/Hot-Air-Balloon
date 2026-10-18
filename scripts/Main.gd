@@ -47,6 +47,12 @@ var snap_score := 0
 var eff_add := 0.0
 var recipe: LegRecipe               # this leg's goal and twists
 var tool_charges := PackedInt32Array([0, 0, 0])   # sandbag, anchor, quick vent: charges left this leg
+const CONTROL_HINTS := [
+	"TAP the top half of the screen to rise one wind layer, the bottom half to drop one.",
+	"DRAG up and down: the balloon follows your finger. Let go to hold your height.",
+	"HOLD to rise at a steady speed, let go to sink at a steady speed.",
+]
+var _hinted := -1
 var tool_avail: Array = []         # the tools this Flight offers
 var _goal_key := -1                  # the Daily Flight is a little harder than its region's mid Flight
 var _air_pct := -1
@@ -56,6 +62,8 @@ func _ready() -> void:
 	Engine.max_physics_steps_per_frame = 1   # no physics here: a stall must never trigger catch-up steps
 	lanes = $Lanes
 	balloon = $Balloon
+	balloon.lanes = lanes
+	balloon.scheme = DebugFlags.controls_index()
 	hud = $Hud
 	if DebugFlags.tune_enabled():
 		tune_panel = TunePanel.new()
@@ -233,6 +241,8 @@ func _prewarm() -> void:
 			lanes.burst(Vector2(780, 900), Color(1.0, 0.5, 0.15), 12, 300.0)
 		balloon.heat = 1.0
 		balloon.queue_redraw()
+		lanes.preview_balloon = balloon   # (warms the preview's meshes too)
+		balloon.predict(false, true)
 		hud.shop.prewarm_show(shop_tick % 26)
 		shop_tick += 1
 		lanes.update(minf(get_process_delta_time(), 0.05))
@@ -246,6 +256,7 @@ func _prewarm() -> void:
 		if elapsed_s >= Tuning.prewarm_min_seconds and calm_frames >= Tuning.prewarm_stable_frames:
 			break
 	lanes.clear_fx()
+	lanes.preview_balloon = null
 	balloon.heat = 0.0
 	lanes.setup(Flights.eff_level(0, 0, 0), false, Flights.leg_seed(Flights.seed_of(0), 0), 0)
 	hud.end_prewarm()
@@ -286,7 +297,10 @@ func _begin_leg() -> void:
 	lanes.setup(_eff(leg), false, Flights.leg_seed(flight_seed, leg), flight_region, recipe)
 	lanes.visible = true
 	_goal_key = -1
-	tool_avail = Flights.tools_for(flight_region, flight_index)
+	tool_avail = []
+	for t in Flights.tools_for(flight_region, flight_index):
+		if Balloon.tool_fits(balloon.scheme, t):   # (Quick Vent only exists in the steady scheme)
+			tool_avail.append(t)
 	tool_charges[0] = int(Tuning.sandbag_charges)
 	tool_charges[1] = int(Tuning.anchor_charges)
 	tool_charges[2] = int(Tuning.vent_charges)
@@ -313,6 +327,9 @@ func _begin_leg() -> void:
 			Save.mark_tool_seen(t)
 			hud.show_hint(_tool_intro(t), 5.0)
 			break
+	if leg == 0 and _hinted != balloon.scheme and not hud.hint_label.visible:   # (once per page load)
+		_hinted = balloon.scheme
+		hud.show_hint(CONTROL_HINTS[balloon.scheme], 4.5)
 	screen = SCREEN_PLAY
 
 func _update_progress() -> void:
@@ -448,15 +465,24 @@ func _on_tool_button(pos: Vector2) -> bool:
 			return true
 	return false
 
+## Steady scheme: is the player holding (a finger, the mouse, Space or Up)? The other schemes never hold.
 func _holding() -> bool:
 	if burn_override >= 0:
 		return burn_override == 1
+	if balloon.scheme != Balloon.STEADY:
+		return false
 	if (tune_panel and tune_panel.is_open) or hud.ad_active:
 		return false
-	if Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_UP):
+	if Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W):
 		return true
 	var mouse := get_viewport().get_mouse_position()
-	return Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not TunePanel.button_hit(mouse) and not (hud.boost_btn.visible and hud.boost_btn.get_global_rect().has_point(mouse)) and not _on_tool_button(mouse)
+	return Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and _tap_free(mouse)
+
+## Is a touch at pos on the playfield (not on a tool, the boost button or the TUNE button)?
+func _tap_free(pos: Vector2) -> bool:
+	if (tune_panel and tune_panel.is_open) or hud.ad_active:
+		return false
+	return not TunePanel.button_hit(pos) and not (hud.boost_btn.visible and hud.boost_btn.get_global_rect().has_point(pos)) and not _on_tool_button(pos)
 
 ## One simulation step of `dt` seconds.
 func sim(dt: float) -> void:
@@ -483,18 +509,21 @@ func _play(dt: float) -> void:
 	balloon.ceiling_y = Lanes.CEILING_Y if goal == Flights.LANDING else (Lanes.GOAL_Y + 14.0 if blocked else -100000.0)
 	lanes.storm_go = leg_started and leg_time >= Tuning.storm_start_delay
 	var climb_mult := lanes.climb_mult_at(balloon.position.y)
-	balloon.step(dt, _holding(), fuel > 0.0, lanes.wind_at(balloon.position.y), lanes.thermal_lift(balloon.position.x), climb_mult)
+	var hold := _holding()
+	balloon.step(dt, hold, fuel > 0.0, lanes.thermal_lift(balloon.position.x) if balloon.scheme != Balloon.LANES else 0.0)
 	if lanes.thin_air:
-		var pct := int(climb_mult * 100.0)
+		var pct := int(100.0 / climb_mult)
 		if pct != _air_pct:
 			_air_pct = pct
-			hud.set_air("thin air: burner at %d%%" % pct)
+			hud.set_air("thin air: climbing costs %d%% propane" % pct)
 	if not leg_started and not balloon.on_ground:
 		leg_started = true
 	if leg_started:
 		leg_time += dt
-	if balloon.burning:
-		fuel = maxf(fuel - Tuning.burn_rate * dt, 0.0)
+	fuel = maxf(fuel - balloon.take_fuel_cost(climb_mult), 0.0)
+	lanes.preview_balloon = balloon if DebugFlags.preview_enabled() else null
+	if lanes.preview_balloon:
+		balloon.predict(hold, fuel > 0.0)
 	lanes.update(dt)
 	var got := lanes.collect(balloon)
 	if got > 0:
@@ -565,7 +594,7 @@ func _update_goal() -> void:
 func _tool_intro(t: int) -> String:
 	match t:
 		0:
-			return "NEW TOOL: SANDBAG. Tap it to drop a sandbag for an instant climb burst (%d per leg)." % int(Tuning.sandbag_charges)
+			return "NEW TOOL: SANDBAG. Tap it for a free climb: %s (%d per leg)." % ["one layer up" if balloon.scheme == Balloon.LANES else "a quick burst up", int(Tuning.sandbag_charges)]
 		1:
 			return "NEW TOOL: ANCHOR. Tap it to hold your position for %d seconds (%d per leg)." % [int(Tuning.anchor_seconds), int(Tuning.anchor_charges)]
 	return "NEW TOOL: QUICK VENT. Tap it to dump hot air for a much faster descent (%d per leg)." % int(Tuning.vent_charges)
@@ -578,10 +607,11 @@ func _sync_tools() -> void:
 func use_tool(i: int) -> bool:
 	if screen != SCREEN_PLAY or hud.ad_active or not tool_avail.has(i) or tool_charges[i] <= 0:
 		return false
+	if i == 0 and not balloon.use_sandbag():
+		return false
 	tool_charges[i] -= 1
 	match i:
 		0:
-			balloon.use_sandbag()
 			lanes.burst(balloon.position + Vector2(0, 70), Color(0.85, 0.7, 0.4), 8, 240.0)
 		1:
 			balloon.use_anchor()
@@ -591,21 +621,73 @@ func use_tool(i: int) -> bool:
 	_sync_tools()
 	return true
 
-## Touches on the tool buttons (handled here so a second finger works while the first holds the burner).
+var _drag_id := -2   # the finger (or -1 = the mouse) that is dragging the balloon (drag scheme)
+
+## Touches: the tool buttons, then the scheme's own control. Handled here (not polled) so a second finger works.
 func _input(event: InputEvent) -> void:
 	if _warming or screen != SCREEN_PLAY:
 		return
 	var pos := Vector2(-1, -1)
-	if event is InputEventScreenTouch and event.pressed:
+	var finger := -1
+	var pressed := false
+	var released := false
+	var moved := false
+	if event is InputEventScreenTouch:
 		pos = event.position
-	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and event.device != InputEvent.DEVICE_ID_EMULATION:
+		finger = event.index
+		pressed = event.pressed
+		released = not event.pressed
+	elif event is InputEventScreenDrag:
+		pos = event.position
+		finger = event.index
+		moved = true
+	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.device != InputEvent.DEVICE_ID_EMULATION:
 		pos = event.position   # (a mouse click; the emulated mouse of a touch is skipped: the touch itself is handled above)
+		pressed = event.pressed
+		released = not event.pressed
+	elif event is InputEventMouseMotion and event.device != InputEvent.DEVICE_ID_EMULATION and (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
+		pos = event.position
+		moved = true
+	elif event is InputEventKey and event.pressed and not event.echo:
+		_key(event.keycode)
+		return
 	if pos.x < 0.0:
 		return
-	for i in 3:
-		if tool_avail.has(i) and Hud.TOOL_RECTS[i].has_point(pos):
-			use_tool(i)
+	if pressed:
+		for i in 3:
+			if tool_avail.has(i) and Hud.TOOL_RECTS[i].has_point(pos):
+				use_tool(i)
+				return
+		if not _tap_free(pos):
 			return
+		if balloon.scheme == Balloon.LANES:
+			tap(pos.y)
+		elif balloon.scheme == Balloon.DRAG:
+			_drag_id = finger
+			balloon.drag_begin(pos.y)
+	elif moved and balloon.scheme == Balloon.DRAG and finger == _drag_id:
+		balloon.drag_move(pos.y)
+	elif released and finger == _drag_id:
+		_drag_id = -2
+
+## A tap at screen height y (lanes): the top half rises one layer, the bottom half drops one.
+func tap(y: float) -> bool:
+	if screen != SCREEN_PLAY or hud.ad_active:
+		return false
+	return balloon.request_hop(1 if y < Lanes.H * 0.5 else -1, fuel > 0.0)
+
+func _key(code: int) -> void:
+	if (tune_panel and tune_panel.is_open) or hud.ad_active:
+		return
+	var up: bool = code == KEY_UP or code == KEY_W
+	var down: bool = code == KEY_DOWN or code == KEY_S
+	if balloon.scheme == Balloon.LANES:
+		if up or code == KEY_SPACE:
+			balloon.request_hop(1, fuel > 0.0)
+		elif down:
+			balloon.request_hop(-1, fuel > 0.0)
+	elif balloon.scheme == Balloon.DRAG and (up or down):
+		balloon.drag_target = clampf(balloon.drag_target + (-160.0 if up else 160.0), maxf(balloon.ceiling_y, -1.0e5), balloon.floor_y())
 
 # ---------------------------------------------------------------------------------------------------------
 # Frame time: the simulation can never run ahead of the clock

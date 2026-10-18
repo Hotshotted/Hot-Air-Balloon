@@ -12,19 +12,27 @@ var stall_delta := 0.25
 ## Frames skipped (no simulation) after a stall or the window coming back, so nothing catches up.
 var resume_skip_frames := 2
 
-# ---------- Balloon: buoyancy and burner ----------
-## Vertical speed (px/s) at full burner heat, and at zero heat (the slow sink).
-var climb_speed := 250.0
-var sink_speed := 90.0
-## Buoyancy lag (1/s): how fast vertical speed follows what the heat asks for. Lower = more sluggish.
-var buoyancy_lag := 2.0
-## Burner spool (heat per second): how fast the air heats up while the burner fires, and cools after.
-var heat_rate := 1.8
-var cool_rate := 1.1
-## How fast the balloon picks up the wind of the layer it is in (1/s). Lower = more drift lag.
-var wind_follow := 1.5
+# ---------- Controls (?controls=lanes|drag|steady) ----------
+## No buoyancy lag, no momentum: every scheme moves the balloon exactly as the input says.
+## lanes: a tap on the top / bottom half of the screen hops one layer up / down; the hop takes hop_time seconds with
+## smooth easing, and each hop UP costs hop_fuel propane (a hop inside a thermal, or from a Sandbag, is free).
+var hop_time := 0.35
+var hop_fuel := 4.0
+## drag: the balloon follows the finger 1:1 with only light smoothing (drag_smooth, 1/s; 20 = about 50 ms) and never
+## faster than drag_max_speed px/s. Releasing holds the altitude.
+var drag_smooth := 20.0
+var drag_max_speed := 900.0
+## steady: hold to rise at steady_climb_speed, release to sink at steady_sink_speed (px/s), constant, no lag.
+var steady_climb_speed := 300.0
+var steady_sink_speed := 110.0
+## drag and steady: climbing burns climb_burn_per_100px propane per 100 px climbed (descending is free in every scheme).
+var climb_burn_per_100px := 2.2
+## The balloon's sideways speed is exactly its layer's wind; it blends to a new layer's wind over wind_blend_time seconds.
+var wind_blend_time := 0.25
 ## true: leaving one side of the screen brings the balloon back on the other. false: the edges block.
 var edge_wrap := true
+## ?preview: the faint dotted line shows where the balloon will be in preview_seconds, the ghost rings where the hazards will be.
+var preview_seconds := 1.5
 ## Balloon size multiplier, and how much of its drawn size counts for collisions (0.85 = forgiving).
 var balloon_scale := 0.8
 var hit_forgiveness := 0.85
@@ -45,17 +53,17 @@ var empty_lane_chance := 0.25
 # ---------- Regions ----------
 ## Countryside winds are this much of the base speed (gentle).
 var countryside_wind_mult := 0.8
-## Alps: a layer's wind swells and fades by +-gust_amp around its steady speed, once per 2*pi/gust_rate seconds.
-var gust_amp := 0.55
-var gust_rate := 0.5
-## Sahara: thermals are columns (half width thermal_width px) that add up to thermal_lift px/s of rise.
+## Alps: strong, steady winds (this much faster than the base speed, still capped by wind_max).
+var alps_wind_mult := 1.25
+## Sahara: thermals are columns (half width thermal_width px): in drag / steady they add thermal_lift px/s of free rise,
+## in lanes a hop up from inside one is free.
 ## Sand haze: layers more than haze_clear_lanes away from the balloon fade, haze_per_lane alpha per layer, up to haze_max.
 var thermal_width := 95.0
 var thermal_lift := 210.0
 var haze_clear_lanes := 1.0
 var haze_per_lane := 0.38
 var haze_max := 0.9
-## Himalayas: the burner loses up to thin_air_loss of its climb speed at the top; the top layer is a jet stream (px/s).
+## Himalayas: thin air: climbing costs up to 1 / (1 - thin_air_loss) times the propane at the top; the top layer is a jet stream (px/s).
 var thin_air_loss := 0.45
 var jet_wind := 250.0
 
@@ -83,8 +91,6 @@ var star_coin_frac := 0.6
 # ---------- Propane ----------
 ## Tank size, which is also what a Flight starts with (a fresh tank every Flight).
 var propane_start := 100.0
-## Propane burned per second while the burner fires.
-var burn_rate := 4.5
 ## What one pickup gives back, the chance a layer carries one, and what clearing a leg refills (0 = nothing).
 var propane_refill := 20.0
 var propane_chance := 0.4
@@ -120,10 +126,11 @@ var dock_half_w := 100.0
 var dock_half_h := 70.0
 
 # ---------- Player tools (unlocked by region) ----------
-## Sandbag (Alps): drop it for an instant climb burst of sandbag_boost px/s. Anchor (Sahara): hold position for
-## anchor_seconds. Quick Vent (Himalayas): descend vent_mult times faster for vent_seconds. Charges are per leg.
+## Sandbag (Alps): a free climb burst: one layer up in lanes, sandbag_px px in drag / steady. Anchor (Sahara): hold
+## position (no drift, no climbing) for anchor_seconds. Quick Vent (Himalayas, steady only): descend vent_mult times
+## faster for vent_seconds. Charges are per leg.
 var sandbag_charges := 2.0
-var sandbag_boost := 300.0
+var sandbag_px := 230.0
 var anchor_charges := 1.0
 var anchor_seconds := 2.0
 var vent_charges := 2.0
@@ -138,9 +145,9 @@ var vent_mult := 3.0
 var kite_beat_period := 2.4
 var kite_dip := 0.85
 var lightning_period := 6.0
-var lightning_warning := 1.1
+var lightning_warning := 1.4
 var lightning_strike := 0.3
-var lightning_width := 110.0
+var lightning_width := 90.0
 var reverse_period := 8.0
 
 # ---------- Daily Flight ----------

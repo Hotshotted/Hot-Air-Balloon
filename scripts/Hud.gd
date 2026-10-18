@@ -116,7 +116,7 @@ func _ready() -> void:
 	stamp_label = Ui.label("", 22, HORIZONTAL_ALIGNMENT_RIGHT, Vector2(560, 1870), Vector2(500, 36))
 	stamp_label.modulate = Color(1, 1, 1, 0.6)
 	var flags := DebugFlags.summary()
-	stamp_label.text = "%s  %s%s" % [BuildInfo.COMMIT, BuildInfo.TIME, ("  " + flags) if flags != "" else ""]
+	stamp_label.text = "%s  %s  controls=%s%s" % [BuildInfo.COMMIT, BuildInfo.TIME, DebugFlags.controls, ("  " + flags) if flags != "" else ""]
 	for l in [level_label, score_label, coins_label, stamp_label]:
 		add_child(l)
 	gauge = Control.new()
