@@ -494,11 +494,13 @@ func sim(dt: float) -> void:
 		SCREEN_PLAY:
 			_play(dt)
 		SCREEN_CLEAR:
+			lanes.preview_balloon = null
 			lanes.update(dt)
 			clear_left -= dt
 			if clear_left <= 0.0:
 				_begin_leg()
 		_:
+			lanes.preview_balloon = null
 			lanes.update(dt)
 
 func _play(dt: float) -> void:

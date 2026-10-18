@@ -21,7 +21,7 @@ var hop_fuel := 4.0
 ## drag: the balloon follows the finger 1:1 with only light smoothing (drag_smooth, 1/s; 20 = about 50 ms) and never
 ## faster than drag_max_speed px/s. Releasing holds the altitude.
 var drag_smooth := 20.0
-var drag_max_speed := 900.0
+var drag_max_speed := 1400.0
 ## steady: hold to rise at steady_climb_speed, release to sink at steady_sink_speed (px/s), constant, no lag.
 var steady_climb_speed := 300.0
 var steady_sink_speed := 110.0

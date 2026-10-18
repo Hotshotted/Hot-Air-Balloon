@@ -165,7 +165,7 @@ func _ready() -> void:
 	var dm := ShapeMesh.new()
 	dm.circle(Vector2.ZERO, 1.0, Color.WHITE, false, 0.0, 0.0, 8)
 	_pv_dots = _make_mm(dm.build(), Balloon.PRED_N, false, null, HZ_STRIDE)
-	_pv_dots.modulate = Color(1, 1, 1, 0.6)
+	_pv_dots.modulate = Color(1, 1, 1, 0.8)
 	_pv_dot_buf.resize(Balloon.PRED_N * HZ_STRIDE)
 	var gm := ShapeMesh.new()
 	var ring: Array = []
@@ -173,7 +173,7 @@ func _ready() -> void:
 		ring.append(Vector2(cos(TAU * float(a) / 16.0), sin(TAU * float(a) / 16.0)))
 	gm.polyline(ring, 0.1, Color.WHITE)
 	_pv_ghosts = _make_mm(gm.build(), Lanes.MAX_HAZ, false, null, HZ_STRIDE)
-	_pv_ghosts.modulate = Color(1, 1, 1, 0.4)
+	_pv_ghosts.modulate = Color(1, 1, 1, 0.55)
 	_pv_ghost_buf.resize(Lanes.MAX_HAZ * HZ_STRIDE)
 	_built = true
 

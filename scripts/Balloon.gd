@@ -412,7 +412,10 @@ func predict(hold: bool, fuel_ok: bool) -> void:
 							y = lerpf(hy0, hy1, p * p * (3.0 - 2.0 * p))
 				DRAG:
 					var want := drag_target if fuel_ok else maxf(drag_target, cur_y)
-					y = cur_y + (want - cur_y) * (1.0 - exp(-Tuning.drag_smooth * dt))
+					y = cur_y
+					var sdt := dt * 0.25   # (in quarters, so the speed cap acts as it does frame by frame)
+					for q in 4:
+						y += clampf((want - y) * (1.0 - exp(-Tuning.drag_smooth * sdt)), -Tuning.drag_max_speed * sdt, Tuning.drag_max_speed * sdt)
 				STEADY:
 					y = cur_y - Tuning.steady_climb_speed * dt if (hold and fuel_ok) else cur_y + Tuning.steady_sink_speed * dt
 			y = clampf(y, maxf(ceiling_y, -1.0e5), fy)

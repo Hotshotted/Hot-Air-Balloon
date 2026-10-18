@@ -208,6 +208,14 @@ func _run() -> void:
 	check(DebugFlags.start_level == 99, "level clamps")
 	DebugFlags.parse([])
 	check(DebugFlags.summary() == "" and DebugFlags.start_level == 1, "no flags -> empty summary")
+	check(DebugFlags.controls == "lanes" and DebugFlags.controls_index() == 0 and DebugFlags.preview_enabled(), "controls default to lanes, preview on")
+	DebugFlags.parse(["controls=drag", "preview=off"])
+	check(DebugFlags.controls_index() == 1 and not DebugFlags.preview_enabled() and DebugFlags.summary().contains("preview=off"), "?controls=drag, ?preview=off")
+	DebugFlags.parse(["controls=steady"])
+	check(DebugFlags.controls_index() == 2 and DebugFlags.preview_enabled(), "?controls=steady")
+	DebugFlags.parse(["controls=wobbly"])
+	check(DebugFlags.controls_index() == 0 and DebugFlags.summary().contains("?controls=wobbly"), "an unknown scheme falls back to lanes and is flagged")
+	DebugFlags.parse([])
 
 	# ---- 2. boot + pre-warm ----
 	print("2. boot and pre-warm")
@@ -301,6 +309,244 @@ func _run() -> void:
 	b.step(1.0 / 30.0, false, true)
 	check(is_equal_approx(b.position.x, half) and b.vx >= 0.0, "edges block when edge_wrap is off")
 	tn.edge_wrap = true
+	b.scheme = BalloonS.STEADY
+
+	# ---- 3b. control schemes ----
+	print("3b. control schemes: lanes, drag, steady")
+	m.start_flight(0)
+	calm(m)
+	b = m.balloon
+	lanes = m.lanes
+	check(b.scheme == BalloonS.STEADY and m.hud.stamp_label.text.contains("controls="), "the active scheme is shown next to the build stamp (%s)" % m.hud.stamp_label.text)
+	var cs_lh: float = lanes.lane_h
+	# --- lanes: tap the top half to rise a layer, the bottom half to drop one ---
+	b.scheme = BalloonS.LANES
+	lanes.lane_wind.fill(0.0)
+	var cs_fuel_a: float = m.fuel
+	check(not m.tap(1500.0), "lanes: a tap below on the ground has nowhere to go")
+	check(m.tap(500.0) and b.hopping, "lanes: a tap on the top half starts a hop up")
+	step(m, 0.1, 0)
+	var cs_frac: float = (b.floor_y() - b.position.y) / (b.floor_y() - b.level_y(0))
+	check(absf(cs_frac - 0.198) < 0.02, "...eased: slow start (%.2f of the way after 0.1 of 0.35 s)" % cs_frac)
+	step(m, 0.3, 0)
+	check(not b.hopping and is_equal_approx(b.position.y, b.level_y(0)), "...arrives exactly at the layer's centre in hop_time")
+	step(m, 0.2, 0)
+	check(b.rise == 0.0 and is_equal_approx(b.position.y, b.level_y(0)), "no momentum: it stops dead and stays (rise %.1f)" % b.rise)
+	check(absf((cs_fuel_a - m.fuel) - tn.hop_fuel) < 0.01, "a hop up costs hop_fuel (%.1f)" % (cs_fuel_a - m.fuel))
+	cs_fuel_a = m.fuel
+	check(m.tap(500.0) and m.tap(500.0) and m.tap(500.0), "taps during a hop are accepted...")
+	step(m, 2.0 * tn.hop_time + 0.1, 0)
+	check(is_equal_approx(b.position.y, b.level_y(2)) and not b.hopping, "...but at most ONE more hop is queued (two layers, not three)")
+	check(absf((cs_fuel_a - m.fuel) - 2.0 * tn.hop_fuel) < 0.01, "...and each hop up paid once (%.1f)" % (cs_fuel_a - m.fuel))
+	cs_fuel_a = m.fuel
+	check(m.tap(1500.0) and b.hop_dir == -1, "the bottom half drops a layer")
+	step(m, 0.5, 0)
+	check(is_equal_approx(b.position.y, b.level_y(1)) and m.fuel == cs_fuel_a, "...for free")
+	var cs_ev := InputEventScreenTouch.new()   # a real touch goes through _input
+	cs_ev.pressed = true
+	cs_ev.position = Vector2(540.0, 400.0)
+	m._input(cs_ev)
+	step(m, 0.5, 0)
+	check(is_equal_approx(b.position.y, b.level_y(2)), "a touch event on the top half hops up")
+	m.fuel = 0.0
+	check(not m.tap(500.0) and m.tap(1500.0), "no propane: no hop up, but a hop down is free")
+	step(m, 0.5, 0)
+	m.fuel = 50.0
+	lanes.th_count = 1
+	lanes.th_x[0] = b.position.x
+	cs_fuel_a = m.fuel
+	check(m.tap(500.0), "(thermal)")
+	step(m, 0.5, 0)
+	check(m.fuel == cs_fuel_a, "a hop up from inside a thermal is free")
+	lanes.th_count = 0
+	b.set_altitude(b.level_y(lanes.n_lanes - 1))
+	b.ceiling_y = b.level_y(lanes.n_lanes - 1) + 5.0
+	check(not b.can_hop(1) and not m.tap(500.0), "the ceiling of an unfinished goal blocks the hop above the top layer")
+	b.ceiling_y = -100000.0
+	b.set_altitude(b.level_y(1))
+	b.vx = 0.0
+	lanes.lane_wind[1] = 120.0
+	lanes.lane_wind[2] = -90.0
+	step(m, 0.6, 0)
+	check(b.vx == 120.0, "lanes: sideways speed is exactly the layer's wind (%.1f)" % b.vx)
+	m.tap(500.0)
+	step(m, 0.2, 0)
+	var cs_mid_vx: float = b.vx
+	step(m, 0.6, 0)
+	check(cs_mid_vx != -90.0 and cs_mid_vx != 120.0 and b.vx == -90.0, "...blending only across a layer change (%.0f -> %.0f)" % [cs_mid_vx, b.vx])
+	# Sandbag in lanes: a free hop up.
+	m.tool_avail = [0]
+	m.tool_charges[0] = 2
+	b.set_altitude(b.level_y(0))
+	cs_fuel_a = m.fuel
+	check(m.use_tool(0) and m.tool_charges[0] == 1, "lanes: the Sandbag is a free hop up")
+	step(m, 0.5, 0)
+	check(is_equal_approx(b.position.y, b.level_y(1)) and m.fuel == cs_fuel_a, "...(layer %d, no propane)" % (lanes.lane_of(b.position.y)))
+	b.set_altitude(b.level_y(lanes.n_lanes - 1))
+	b.ceiling_y = b.level_y(lanes.n_lanes - 1) + 5.0
+	check(not m.use_tool(0) and m.tool_charges[0] == 1, "...and is not spent when there is nowhere to go")
+	b.ceiling_y = -100000.0
+	check(not BalloonS.tool_fits(BalloonS.LANES, 2) and not BalloonS.tool_fits(BalloonS.DRAG, 2) and BalloonS.tool_fits(BalloonS.STEADY, 2) and BalloonS.tool_fits(BalloonS.LANES, 1), "Quick Vent exists only in the steady scheme")
+	m.tool_avail = []
+	# --- drag: the altitude follows the finger 1:1 ---
+	m.start_flight(0)
+	calm(m)
+	b = m.balloon
+	lanes = m.lanes
+	b.scheme = BalloonS.DRAG
+	lanes.lane_wind.fill(0.0)
+	b.set_altitude(b.level_y(2))
+	var cs_y_d: float = b.position.y
+	cs_fuel_a = m.fuel
+	cs_ev = InputEventScreenTouch.new()
+	cs_ev.pressed = true
+	cs_ev.position = Vector2(300.0, 1000.0)
+	m._input(cs_ev)
+	var cs_evd := InputEventScreenDrag.new()
+	cs_evd.position = Vector2(300.0, 900.0)
+	m._input(cs_evd)
+	check(is_equal_approx(b.drag_target, cs_y_d - 100.0), "drag: the finger moving 100 px up asks for 100 px of altitude")
+	step(m, 0.05, 0)
+	var moved_d: float = cs_y_d - b.position.y
+	check(moved_d > 55.0 and moved_d < 70.0, "...and the balloon is most of the way there in 50 ms (%.0f px): light smoothing only" % moved_d)
+	step(m, 0.5, 0)
+	check(absf(b.position.y - (cs_y_d - 100.0)) < 0.5, "...then exactly at the finger's height")
+	check(absf((cs_fuel_a - m.fuel) - 100.0 * 0.01 * tn.climb_burn_per_100px) < 0.15, "climbing 100 px burns climb_burn_per_100px (%.2f)" % (cs_fuel_a - m.fuel))
+	var cs_y_hold: float = b.position.y
+	step(m, 1.0, 0)
+	check(absf(b.position.y - cs_y_hold) < 0.05 and absf(b.rise) < 1.0, "letting go (finger still) holds the altitude")
+	cs_fuel_a = m.fuel
+	cs_evd = InputEventScreenDrag.new()
+	cs_evd.position = Vector2(300.0, 1150.0)
+	m._input(cs_evd)
+	step(m, 0.6, 0)
+	check(b.position.y > cs_y_hold + 100.0 and m.fuel == cs_fuel_a, "dragging down is free")
+	cs_evd = InputEventScreenDrag.new()
+	cs_evd.position = Vector2(300.0, 0.0)
+	m._input(cs_evd)
+	var cs_y_before_cap: float = b.position.y
+	step(m, 0.1, 0)
+	check(cs_y_before_cap - b.position.y <= tn.drag_max_speed * 0.1 + 1.0 and cs_y_before_cap - b.position.y > 50.0, "a huge flick is capped at drag_max_speed (%.0f px in 0.1 s)" % (cs_y_before_cap - b.position.y))
+	cs_ev = InputEventScreenTouch.new()
+	cs_ev.pressed = false
+	m._input(cs_ev)
+	b.set_altitude(b.level_y(2))
+	m.fuel = 0.0
+	cs_ev = InputEventScreenTouch.new()
+	cs_ev.pressed = true
+	cs_ev.position = Vector2(300.0, 1000.0)
+	m._input(cs_ev)
+	cs_evd = InputEventScreenDrag.new()
+	cs_evd.position = Vector2(300.0, 700.0)
+	m._input(cs_evd)
+	var cs_y_nof: float = b.position.y
+	step(m, 0.5, 0)
+	check(b.position.y >= cs_y_nof - 0.01, "drag with an empty tank: the balloon cannot be pulled up")
+	cs_ev = InputEventScreenTouch.new()
+	cs_ev.pressed = false
+	m._input(cs_ev)
+	m.fuel = tn.propane_start
+	# Drag sandbag: a free burst.
+	m.tool_avail = [0]
+	m.tool_charges[0] = 2
+	b.set_altitude(b.level_y(3))
+	var cs_y_sb: float = b.position.y
+	cs_fuel_a = m.fuel
+	check(m.use_tool(0), "drag: the Sandbag")
+	step(m, 1.0, 0)
+	check(absf((cs_y_sb - b.position.y) - tn.sandbag_px) < 2.0 and absf(m.fuel - cs_fuel_a) < 0.05, "...is a free climb of sandbag_px (%.0f px)" % (cs_y_sb - b.position.y))
+	m.tool_avail = []
+	# --- the drift preview ---
+	m.start_flight(0)
+	calm(m)
+	b = m.balloon
+	lanes = m.lanes
+	lanes.lane_wind.fill(100.0)
+	b.scheme = BalloonS.STEADY
+	b.set_altitude(b.level_y(2))
+	for i in 40:
+		b.step(1.0 / 60.0, false, true)
+		b.set_altitude(b.level_y(2))
+	b.predict(false, true)
+	var cs_end_pred: Vector2 = b.pred[BalloonS.PRED_N - 1]
+	var cs_p0: Vector2 = b.position
+	for i in 90:
+		b.step(1.0 / 60.0, false, true)
+	check(cs_end_pred.distance_to(b.position) < 3.0 and absf(cs_end_pred.x - (cs_p0.x + 150.0)) < 3.0, "preview (steady): the dotted path ends where the balloon is 1.5 s later (off by %.1f px)" % cs_end_pred.distance_to(b.position))
+	b.scheme = BalloonS.DRAG
+	b.set_altitude(b.level_y(3))
+	b.drag_target = b.position.y - 220.0
+	b.predict(false, true)
+	cs_end_pred = b.pred[BalloonS.PRED_N - 1]
+	for i in 90:
+		b.step(1.0 / 60.0, false, true)
+	check(cs_end_pred.distance_to(b.position) < 6.0, "preview (drag): ends where the balloon is 1.5 s later (off by %.1f px)" % cs_end_pred.distance_to(b.position))
+	b.scheme = BalloonS.LANES
+	b.set_altitude(b.level_y(1))
+	b.request_hop(1, true)
+	b.predict(false, true)
+	check(is_equal_approx(b.pred[BalloonS.PRED_N - 1].y, b.hop_y1) and b.pred[0].y > b.hop_y1 and b.pred[0].y < b.position.y + 0.01, "preview (lanes): follows the hop in progress and ends on the target layer")
+	b.scheme = BalloonS.STEADY
+	# Ghost hazards: where each hazard will be in preview_seconds.
+	m.start_flight(7)
+	b = m.balloon
+	lanes = m.lanes
+	var cs_gi := -1
+	for i in lanes.n_lanes:
+		if lanes.lane_count[i] > 0 and lanes.lane_rev[i] == 0.0:
+			cs_gi = i
+			break
+	var cs_gx_pred: float = lanes.hazard_x_in(cs_gi, 0, tn.preview_seconds)
+	var cs_steps_g := int(round(tn.preview_seconds * 60.0))
+	for i in cs_steps_g:
+		lanes.update(1.0 / 60.0)
+	var cs_gdx := absf(fposmod(lanes.hz_x[cs_gi * LanesS.MAX_PER_LANE] - cs_gx_pred + LanesS.RING * 0.5, LanesS.RING) - LanesS.RING * 0.5)
+	check(cs_gdx < 0.5, "ghost hazards: a hazard really is where its ghost said (off by %.2f px)" % cs_gdx)
+	lanes.preview_balloon = b
+	b.predict(false, true)
+	lanes.update(1.0 / 60.0)
+	var hz_ghosts := 0
+	for i in lanes.n_lanes:
+		if lanes.lane_kind[i] >= 0:
+			hz_ghosts += lanes.lane_count[i]
+	check(lanes.render._pv_dots.visible and lanes.render._pv_ghosts.visible and lanes.render._pv_ghosts.multimesh.visible_instance_count == hz_ghosts and hz_ghosts > 0, "the preview draws its dots and one ghost per hazard (%d)" % hz_ghosts)
+	DebugFlags.parse(["preview=off"])
+	m.sim(1.0 / 60.0)
+	check(lanes.preview_balloon == null and not lanes.render._pv_dots.visible and not lanes.render._pv_ghosts.visible, "?preview=off hides it")
+	DebugFlags.parse([])
+	m.sim(1.0 / 60.0)
+	check(lanes.preview_balloon == b and lanes.render._pv_dots.visible, "...and it is back without the flag")
+	# --- constant, readable winds ---
+	var cs_const_all := true
+	var cs_labels_ok := true
+	var cs_big_font := 0
+	var cs_small_font := 99
+	for r in 4:
+		lanes.setup(FlightsS.eff_level(r, 3, 2), false, 600 + r, r)
+		var w_before := PackedFloat32Array(lanes.lane_wind)
+		for i in 600:
+			lanes.update(1.0 / 30.0)
+		for i in lanes.n_lanes:
+			if lanes.lane_rev[i] == 0.0 and lanes.lane_wind[i] != w_before[i]:
+				cs_const_all = false
+			if lanes.lane_rev[i] == 0.0:
+				var txt: String = lanes.render._wind_labels[i].text
+				var mag := int(round(absf(lanes.lane_wind[i]) / 5.0)) * 5
+				cs_labels_ok = cs_labels_ok and txt.begins_with(">" if lanes.lane_wind[i] > 0.0 else "<") and txt.ends_with(str(mag)) and lanes.render._wind_labels[i].visible
+				var fs: int = lanes.render._wind_labels[i].get_theme_font_size("font_size")
+				cs_big_font = maxi(cs_big_font, fs)
+				cs_small_font = mini(cs_small_font, fs)
+	check(cs_const_all, "every layer's wind is constant for 20 s in all four regions (no random gusts)")
+	check(cs_labels_ok and cs_big_font > cs_small_font, "every layer shows its direction and speed, bigger for stronger winds (font %d..%d)" % [cs_small_font, cs_big_font])
+	# --- pickups hang still ---
+	lanes.setup(6.0, false, 77, 1)
+	var cs_pk0 := Array(lanes.pk_x.slice(0, 9))
+	var cs_cn0 := Array(lanes.cn_x.slice(0, 9))
+	for i in 180:
+		lanes.update(1.0 / 60.0)
+	check(Array(lanes.pk_x.slice(0, 9)) == cs_pk0 and Array(lanes.cn_x.slice(0, 9)) == cs_cn0, "propane tanks and coins hang still (the balloon sweeps past)")
+	m.start_flight(0)
+	b = m.balloon
 	b.scheme = BalloonS.STEADY
 
 	# ---- 4. hazards ----
