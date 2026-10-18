@@ -102,6 +102,30 @@ var leg_coins := 10.0
 var coin_value := 5.0
 var propane_coins := 0.3
 
+# ---------- Daily Flight ----------
+## The Daily Flight (seeded by the date): coins for the first completion of the day, plus a bonus per day of the
+## streak (up to daily_streak_cap days). Its difficulty is the region's mid Flight plus daily_level_bonus.
+var daily_bonus_coins := 100.0
+var daily_streak_bonus := 10.0
+var daily_streak_cap := 7.0
+var daily_level_bonus := 0.8
+
+# ---------- Ads (stubs: no SDK yet; a fake "Ad playing" screen stands in) ----------
+var ads_enabled := true   # (a bool: edited by the ?tune switch)
+## How long the fake ad plays before it can be closed / claimed (seconds).
+var ad_fake_seconds := 2.0
+## Rewarded: "+50% propane" on the ground at the start of a leg (offered while the tank is at or below
+## ad_boost_below of its size, at most ad_boost_max_per_flight times per Flight), and "Retry this leg" after a
+## failed leg (at most ad_retry_max_per_flight per Flight).
+var ad_boost_frac := 0.5
+var ad_boost_below := 0.75
+var ad_boost_max_per_flight := 2.0
+var ad_retry_max_per_flight := 1.0
+## Interstitial: only BETWEEN Flights (on the result / failed screens, never during play): once every
+## ad_interstitial_every Flights, and not at all until more than ad_interstitial_after Flights have been played.
+var ad_interstitial_every := 3.0
+var ad_interstitial_after := 2.0
+
 # ---------- Start-up pre-warm (splash screen) ----------
 ## At boot every shape is drawn for real behind a splash screen so shaders, buffers and font glyphs
 ## are set up before play. It lasts at least prewarm_min_seconds, then until frames are calm.

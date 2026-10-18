@@ -16,6 +16,10 @@ signal album_closed
 signal shop_pressed
 signal shop_closed
 signal cosmetics_changed
+signal daily_pressed
+signal boost_pressed
+signal retry_pressed
+signal ad_finished(rewarded: bool)
 signal flight_chosen(id: int)
 
 var level_label: Label
@@ -29,6 +33,17 @@ var air_label: Label
 var map: MapScreen
 var album: AlbumScreen
 var shop: ShopScreen
+var boost_btn: Button
+var retry_btn: Button
+var ad_p: Control
+var ad_title: Label
+var ad_sub: Label
+var ad_count: Label
+var ad_claim: Button
+var ad_cancel: Button
+var ad_active := false
+var ad_left := 0.0
+var _ad_secs := -1
 var card_p: Control
 var card_view: PostcardView
 var card_header: Label
@@ -111,6 +126,7 @@ func _ready() -> void:
 	map.flight_chosen.connect(func(id: int): flight_chosen.emit(id))
 	map.album_pressed.connect(func(): album_pressed.emit())
 	map.shop_pressed.connect(func(): shop_pressed.emit())
+	map.daily_pressed.connect(func(): daily_pressed.emit())
 	album = AlbumScreen.new()
 	add_child(album)
 	album.back_pressed.connect(func(): album_closed.emit())
@@ -125,6 +141,11 @@ func _ready() -> void:
 	_build_dead()
 	_build_result()
 	_build_card()
+	boost_btn = Ui.button("+50% PROPANE  (AD)", 44, Vector2(240, 1420), Vector2(600, 110), Color(0.6, 0.35, 0.85))
+	boost_btn.visible = false
+	boost_btn.pressed.connect(func(): boost_pressed.emit())
+	add_child(boost_btn)
+	_build_ad()
 	splash = ColorRect.new()
 	splash.color = Color(0.06, 0.1, 0.18, 0.97)
 	splash.size = Vector2(Lanes.W, Lanes.H)
@@ -178,6 +199,51 @@ func _build_menu() -> void:
 	for b in [prev_btn, next_btn, fly_btn, menu_back]:
 		menu_p.add_child(b)
 
+func _build_ad() -> void:
+	ad_p = _panel()
+	ad_p.get_child(0).color = Color(0.08, 0.06, 0.14, 0.97)
+	ad_title = Ui.label("AD PLAYING", 90, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 400), Vector2(1000, 130))
+	ad_p.add_child(ad_title)
+	ad_sub = Ui.label("", 56, HORIZONTAL_ALIGNMENT_CENTER, Vector2(60, 560), Vector2(960, 200))
+	ad_sub.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	ad_p.add_child(ad_sub)
+	ad_count = Ui.label("", 60, HORIZONTAL_ALIGNMENT_CENTER, Vector2(60, 780), Vector2(960, 100))
+	ad_p.add_child(ad_count)
+	ad_claim = Ui.button("CLAIM", 60, Vector2(190, 1000), Vector2(700, 140), Color(0.95, 0.5, 0.15))
+	ad_claim.pressed.connect(func(): _end_ad(true))
+	ad_p.add_child(ad_claim)
+	ad_cancel = Ui.button("NO THANKS", 48, Vector2(190, 1190), Vector2(700, 110))
+	ad_cancel.pressed.connect(func(): _end_ad(false))
+	ad_p.add_child(ad_cancel)
+
+## The fake ad screen (stub). `secs` before it can be claimed / closed; `can_cancel`: a NO THANKS button (rewarded).
+func show_ad(title: String, reward: String, secs: float, claim_text: String, can_cancel: bool) -> void:
+	ad_title.text = "AD PLAYING"
+	ad_sub.text = "%s\n%s" % [title, reward]
+	ad_claim.text = claim_text
+	ad_cancel.visible = can_cancel
+	ad_left = secs
+	_ad_secs = -1
+	ad_claim.disabled = secs > 0.0
+	ad_count.text = "" if secs <= 0.0 else "..."
+	ad_active = true
+	ad_p.visible = true
+
+func _end_ad(rewarded: bool) -> void:
+	ad_active = false
+	ad_p.visible = false
+	ad_finished.emit(rewarded)
+
+func _process(delta: float) -> void:
+	if ad_active and ad_left > 0.0:
+		ad_left -= delta
+		var secs := ceili(maxf(ad_left, 0.0))
+		if secs != _ad_secs:
+			_ad_secs = secs
+			ad_count.text = "%d" % secs if secs > 0 else ""
+		if ad_left <= 0.0:
+			ad_claim.disabled = false
+
 func _build_card() -> void:
 	card_p = _panel()
 	card_header = Ui.label("NEW POSTCARD!", 84, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 220), Vector2(1000, 120))
@@ -194,11 +260,14 @@ func _build_dead() -> void:
 	dead_p = _panel()
 	dead_header = Ui.label("FLIGHT FAILED", 84, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 380), Vector2(1000, 120))
 	dead_p.add_child(dead_header)
-	dead_text = Ui.label("", 50, HORIZONTAL_ALIGNMENT_CENTER, Vector2(60, 540), Vector2(960, 360))
+	dead_text = Ui.label("", 50, HORIZONTAL_ALIGNMENT_CENTER, Vector2(60, 520), Vector2(960, 340))
 	dead_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	dead_p.add_child(dead_text)
-	dead_again = Ui.button("FLY AGAIN", 70, Vector2(190, 1000), Vector2(700, 140), Color(0.95, 0.5, 0.15))
-	dead_menu = Ui.button("MAP", 60, Vector2(190, 1180), Vector2(700, 120))
+	retry_btn = Ui.button("RETRY THIS LEG  (AD)", 50, Vector2(190, 880), Vector2(700, 120), Color(0.6, 0.35, 0.85))
+	retry_btn.pressed.connect(func(): retry_pressed.emit())
+	dead_p.add_child(retry_btn)
+	dead_again = Ui.button("FLY AGAIN", 70, Vector2(190, 1030), Vector2(700, 140), Color(0.95, 0.5, 0.15))
+	dead_menu = Ui.button("MAP", 60, Vector2(190, 1210), Vector2(700, 120))
 	dead_again.pressed.connect(func(): again_pressed.emit())
 	dead_menu.pressed.connect(func(): menu_pressed.emit())
 	dead_p.add_child(dead_again)
@@ -327,13 +396,19 @@ func hide_overlays() -> void:
 	album.visible = false
 	shop.visible = false
 	card_p.visible = false
+	ad_p.visible = false
+	ad_active = false
+	boost_btn.visible = false
 	menu_p.visible = false
 	dead_p.visible = false
 	result_p.visible = false
 	_banner_left = 0.0
 
-func show_menu(region_name: String, blurb: String, title: String, lit1: bool, lit2: bool, lit3: bool, info: String, can_prev: bool, can_next: bool, can_fly: bool) -> void:
+func show_menu(region_name: String, blurb: String, title: String, lit1: bool, lit2: bool, lit3: bool, info: String, can_prev: bool, can_next: bool, can_fly: bool, daily: bool = false) -> void:
 	hide_overlays()
+	prev_btn.visible = not daily
+	next_btn.visible = not daily
+	menu_stars.visible = not daily
 	menu_title.text = region_name
 	menu_blurb.text = blurb
 	menu_name.text = title
@@ -368,9 +443,10 @@ func show_postcard(region: int, state: int) -> void:
 	card_header.text = "GOLD POSTCARD!" if state == 2 else "NEW POSTCARD!"
 	card_p.visible = true
 
-func show_dead(text: String) -> void:
+func show_dead(text: String, can_retry: bool = false) -> void:
 	hide_overlays()
 	dead_text.text = text
+	retry_btn.visible = can_retry
 	dead_p.visible = true
 
 ## rows: the three star lines; lit: which stars were earned.
@@ -393,6 +469,10 @@ func begin_prewarm() -> void:
 	map.visible = true
 	shop.refresh()
 	shop.visible = true
+	boost_btn.visible = true
+	ad_p.visible = true
+	ad_sub.text = "Rewarded ad\n+50% propane"
+	ad_count.text = "2"
 	album.refresh()
 	album.visible = true
 	album.zoom_p.visible = true

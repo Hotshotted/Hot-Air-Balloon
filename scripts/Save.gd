@@ -3,7 +3,7 @@ extends Node
 ## storage on the web). New versions only ADD fields: _migrate() fills anything an older file lacks from the
 ## defaults, so old saves keep working. Tests switch `persist` off.
 
-const VERSION := 4
+const VERSION := 5
 const PATH := "user://wind_layers_save.json"
 ## Stars needed in a region (of 18) to open the next one.
 const REGION_UNLOCK_STARS := 12
@@ -34,6 +34,10 @@ func _defaults() -> Dictionary:
 		"postcards": [0, 0, 0, 0],   # per region: 0 none, 1 postcard, 2 gold postcard (v3)
 		"owned": [_owned_default(Cosmetics.ENV), _owned_default(Cosmetics.BASKET), _owned_default(Cosmetics.PASSENGER)],   # per category: owned flags (v4)
 		"equipped": [0, 0, 0],    # per category: the equipped item (v4)
+		"daily_last": -1,         # the day (days since 1970) the Daily Flight was last completed (v5)
+		"daily_streak": 0,        # consecutive days completed (v5)
+		"ad_counter": 0,          # Flights ended since the last interstitial (v5)
+		"flights_ended": 0,       # Flights ended in total, completed or failed (v5)
 	}
 
 func _owned_default(cat: int) -> Array:
@@ -86,6 +90,8 @@ func _migrate(old: Dictionary) -> Dictionary:
 		d["equipped"][cat] = e if e >= 0 and e < Cosmetics.count(cat) and d["owned"][cat][e] else 0
 	d["coins"] = int(d["coins"])
 	d["flights_played"] = int(d["flights_played"])
+	for k in ["daily_last", "daily_streak", "ad_counter", "flights_ended"]:
+		d[k] = int(d[k])
 	d["last_flight"] = clampi(int(d["last_flight"]), 0, Flights.TOTAL - 1)
 	d["version"] = VERSION
 	return d
@@ -209,6 +215,43 @@ func equip(cat: int, i: int) -> bool:
 	data["equipped"][cat] = i
 	save()
 	return true
+
+# ---- Daily Flight ----
+
+func daily_done(day: int) -> bool:
+	return int(data["daily_last"]) == day
+
+## The streak as it stands on `day`: kept while yesterday or today was completed, else lost.
+func daily_streak_now(day: int) -> int:
+	return int(data["daily_streak"]) if int(data["daily_last"]) >= day - 1 else 0
+
+## Complete the Daily Flight of `day`. Returns the bonus coins (0 if it was already completed that day).
+func complete_daily(day: int) -> int:
+	if daily_done(day):
+		return 0
+	data["daily_streak"] = daily_streak_now(day) + 1
+	data["daily_last"] = day
+	save()
+	return roundi(Tuning.daily_bonus_coins + Tuning.daily_streak_bonus * float(mini(int(data["daily_streak"]), int(Tuning.daily_streak_cap)) - 1))
+
+func reset_daily() -> void:
+	data["daily_last"] = -1
+	data["daily_streak"] = 0
+	save()
+
+## A Flight ended (completed or failed): counts toward the next interstitial.
+func note_flight_ended() -> void:
+	data["flights_ended"] = int(data["flights_ended"]) + 1
+	data["ad_counter"] = int(data["ad_counter"]) + 1
+	save()
+
+## Is an interstitial due between Flights now?
+func interstitial_due() -> bool:
+	return Tuning.ads_enabled and int(data["flights_ended"]) > int(Tuning.ad_interstitial_after) and int(data["ad_counter"]) >= int(Tuning.ad_interstitial_every)
+
+func interstitial_shown() -> void:
+	data["ad_counter"] = 0
+	save()
 
 # ---- debug (?tune) ----
 

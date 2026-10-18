@@ -101,6 +101,7 @@ func _initialize() -> void:
 	sv = root.get_node("Save")
 	sv.persist = false
 	sv.reset_all()
+	tn.ads_enabled = false   # (the ad section switches them on)
 	MainS = load("res://scripts/Main.gd")
 	LanesS = load("res://scripts/Lanes.gd")
 	BalloonS = load("res://scripts/Balloon.gd")
@@ -937,6 +938,241 @@ func _run() -> void:
 	check(same(base_s, snap()), "the shop allocates nothing")
 	m.start_flight(0)
 	check(m.balloon.pass_id == 1, "the passenger rides in the next Flight")
+	sv.reset_all()
+	m._show_map()
+
+	# ---- 6f. Daily Flight ----
+	print("6f. Daily Flight")
+	sv.reset_all()
+	FlightsS.debug_today = 20000
+	check(FlightsS.today() == 20000 and FlightsS.daily_region(20000) == 0 and FlightsS.daily_region(20001) == 1 and FlightsS.daily_region(20003) == 3, "the Daily Flight's region rotates with the date")
+	check(FlightsS.daily_seed(20000) != FlightsS.daily_seed(20001), "...and its seed changes every day")
+	# Same date = same Flight.
+	var d_sigs := []
+	for pass_i in 2:
+		m.hud.daily_pressed.emit()
+		check(m.screen == MainS.SCREEN_MENU and m.selected == -1 and m.flight_id == -1, "DAILY opens the daily Flight screen")
+		m.hud.fly_pressed.emit()
+		d_sigs.append([m.flight_region, m.flight_index, m.lanes.n_lanes, Array(m.lanes.hz_x.slice(0, 20)), Array(m.lanes.lane_wind.slice(0, 9))])
+	check(d_sigs[0] == d_sigs[1], "the Daily Flight is identical every time it is played that day")
+	m.start_flight(-1)
+	check(m.hud.level_label.text.begins_with("DAILY FLIGHT") and m.flight_region == 0 and m.eff_add == tn.daily_level_bonus, "the Daily Flight is the region's mid Flight, a little harder")
+	check(m._eff(0) > FlightsS.eff_level(0, 3, 0), "...harder than the same normal Flight")
+	FlightsS.debug_today = 20001
+	m.start_flight(-1)
+	check(m.flight_region == 1 and m.flight_seed != FlightsS.daily_seed(20000), "tomorrow it is a different Flight")
+	FlightsS.debug_today = 20000
+	# Completing it: bonus coins and a streak; no stars are recorded; no postcard.
+	sv.reset_all()
+	win_flight(m, -1, 9, 60.0)
+	var base_coins: int = 5 * roundi(tn.leg_coins) + roundi(m.fuel * tn.propane_coins)
+	check(m.screen == MainS.SCREEN_RESULT and m.last_daily_bonus == roundi(tn.daily_bonus_coins), "completing the Daily Flight pays the daily bonus (%d)" % m.last_daily_bonus)
+	check(sv.daily_done(20000) and sv.daily_streak_now(20000) == 1 and sv.data["daily_streak"] == 1, "streak of 1")
+	check(sv.coins == m.flight_coins and m.flight_coins >= base_coins + m.last_daily_bonus, "the coins (with the bonus) are paid into the save (%d)" % sv.coins)
+	check(sv.total_stars() == 0 and sv.postcard_of(0) == 0 and not m.hud.card_p.visible, "no stars or postcards from the Daily Flight")
+	check(m.hud.result_header.text == "DAILY FLIGHT COMPLETE!" and m.hud.result_summary.text.contains("DAILY BONUS +100") and m.hud.result_next.disabled, "the result screen shows the bonus and the streak")
+	var coins_after: int = sv.coins
+	win_flight(m, -1, 9, 60.0)
+	check(m.last_daily_bonus == 0 and sv.daily_streak_now(20000) == 1 and m.hud.result_summary.text.contains("already claimed"), "replaying the same day pays no second bonus")
+	check(sv.coins > coins_after and sv.coins < coins_after + m.flight_coins + 1, "...but the Flight's own coins still count")
+	m._show_map()
+	check(m.hud.map.daily_btn.text == "DAILY  done  x1", "the map shows the Daily Flight as done")
+	# Streak: consecutive days grow it, a missed day resets it, the bonus grows with it (capped).
+	FlightsS.debug_today = 20001
+	check(sv.daily_streak_now(20001) == 1 and not sv.daily_done(20001), "the next day the streak is still alive")
+	m._show_map()
+	check(m.hud.map.daily_btn.text == "DAILY  streak 1", "...and the map invites you to play")
+	win_flight(m, -1, 0, 5.0)
+	check(sv.daily_streak_now(20001) == 2 and m.last_daily_bonus == roundi(tn.daily_bonus_coins + tn.daily_streak_bonus), "day 2: streak 2 and a bigger bonus (%d)" % m.last_daily_bonus)
+	FlightsS.debug_today = 20004
+	check(sv.daily_streak_now(20004) == 0, "missing a day loses the streak")
+	win_flight(m, -1, 0, 5.0)
+	check(sv.daily_streak_now(20004) == 1 and m.last_daily_bonus == roundi(tn.daily_bonus_coins), "...and it starts again at 1")
+	var bonus_cap: int = roundi(tn.daily_bonus_coins + tn.daily_streak_bonus * (tn.daily_streak_cap - 1.0))
+	var got := 0
+	for dd in range(20005, 20020):
+		FlightsS.debug_today = dd
+		got = sv.complete_daily(dd)
+	check(got == bonus_cap and sv.data["daily_streak"] == 16, "the streak bonus is capped (%d coins)" % got)
+	sv.reset_daily()
+	check(sv.data["daily_last"] == -1 and sv.daily_streak_now(20019) == 0 and not sv.daily_done(20019), "?tune: reset daily")
+	# A failed Daily Flight is not a completion.
+	FlightsS.debug_today = 20000
+	sv.reset_all()
+	m.start_flight(-1)
+	m.fuel = 0.0
+	step(m, 60.0, 1)
+	check(m.screen == MainS.SCREEN_DEAD and not sv.daily_done(20000), "failing the Daily Flight does not complete it")
+	check(sv._migrate({"version": 4})["daily_last"] == -1 and sv._migrate({"version": 4})["ad_counter"] == 0, "a v4 save gets the daily and ad fields")
+	FlightsS.debug_today = -1
+	sv.reset_all()
+	m._show_map()
+
+	# ---- 6g. ads (stubs) ----
+	print("6g. ads")
+	tn.ads_enabled = true
+	tn.ad_fake_seconds = 0.0
+	sv.reset_all()
+	m.start_flight(0)
+	clear_sky(m)
+	# Rewarded: +50% propane at the start of a leg.
+	check(not m.hud.boost_btn.visible, "no boost offered with a full tank")
+	m.fuel = 40.0
+	step(m, 0.05, 0)
+	check(m.hud.boost_btn.visible and m.balloon.on_ground and not m.leg_started, "+50% propane is offered on the ground at the start of a leg when the tank is low")
+	var shown0: int = m.ads.shown
+	m.hud.boost_pressed.emit()
+	check(m.hud.ad_active and m.ads.last_kind == "boost" and m.hud.ad_p.visible and m.hud.ad_sub.text.contains("+50% propane"), "the fake 'Ad playing' screen comes up")
+	var y_frozen: float = m.balloon.position.y
+	var t_frozen: float = m.sim_time
+	step(m, 1.0, 1)
+	check(m.balloon.position.y == y_frozen and m.sim_time == t_frozen, "the world stands still while an ad is up")
+	m.hud.ad_cancel.pressed.emit()
+	check(not m.hud.ad_active and m.fuel == 40.0 and m.boosts_used == 0, "NO THANKS: no reward")
+	m.hud.boost_pressed.emit()
+	m.hud.ad_claim.pressed.emit()
+	check(is_equal_approx(m.fuel, 40.0 + tn.propane_start * tn.ad_boost_frac) and m.boosts_used == 1 and m.ads.shown == shown0 + 2, "CLAIM: +50%% of the tank (%.0f)" % m.fuel)
+	m.fuel = 90.0
+	step(m, 0.05, 0)
+	check(not m.hud.boost_btn.visible, "no boost button when the tank is nearly full")
+	m.fuel = 30.0
+	m.boosts_used = 2
+	step(m, 0.05, 0)
+	check(not m.hud.boost_btn.visible, "at most %d boosts per Flight" % int(tn.ad_boost_max_per_flight))
+	m.boosts_used = 0
+	step(m, 1.0, 1)
+	check(m.leg_started and not m.hud.boost_btn.visible, "the boost is only offered before lift-off")
+	# Rewarded: retry the leg.
+	m.start_flight(0)
+	clear_sky(m)
+	m.fuel = 70.0
+	m.flight_coins = 25
+	m.coins_picked = 2
+	m.score = 150
+	m.leg = 2
+	m._begin_leg()
+	var leg_fuel: float = m.fuel
+	clear_sky(m)
+	m.lanes.lane_kind[2] = 1
+	m.lanes.lane_count[2] = 1
+	m.lanes.lane_scale[2] = 1.0
+	m.lanes.lane_amp[2] = 0.0
+	m.lanes.lane_vel[2] = 0.0
+	m.balloon.position = Vector2(300.0, LanesS.BAND_BOTTOM - 2.5 * m.lanes.lane_h)
+	m.balloon.on_ground = false
+	m.lanes.hz_x[2 * LanesS.MAX_PER_LANE] = 300.0
+	m.flight_coins = 60
+	m.coins_picked = 4
+	m.score = 400
+	m.fuel = 20.0
+	var coins_before_fail: int = sv.coins
+	step(m, 0.1, 0)
+	check(m.screen == MainS.SCREEN_DEAD and m.hud.retry_btn.visible, "after a failed leg: RETRY THIS LEG (AD) is offered")
+	check(sv.coins == coins_before_fail + 60, "the coins earned so far are paid when the Flight ends")
+	m.hud.retry_pressed.emit()
+	check(m.hud.ad_active and m.ads.last_kind == "retry", "the retry plays a rewarded ad")
+	m.hud.ad_cancel.pressed.emit()
+	check(m.screen == MainS.SCREEN_DEAD and m.hud.dead_p.visible and m.retries_used == 0, "backing out of the ad leaves the failed screen")
+	m.hud.retry_pressed.emit()
+	m.hud.ad_claim.pressed.emit()
+	check(m.screen == MainS.SCREEN_PLAY and m.leg == 2 and m.retries_used == 1, "CLAIM: the same leg starts again")
+	check(is_equal_approx(m.fuel, leg_fuel) and m.flight_coins == 25 and m.coins_picked == 2 and m.score == 150, "...with the propane, coins and score it had at the start of the leg")
+	check(m.balloon.on_ground and m.balloon.visible and not m.hud.dead_p.visible, "...balloon back on the ground")
+	# The retried leg is the very same leg.
+	var sig_leg := [m.lanes.n_lanes, Array(m.lanes.hz_x.slice(0, 20))]
+	m.lanes.setup(m._eff(2), false, FlightsS.leg_seed(m.flight_seed, 2), m.flight_region)
+	check(sig_leg == [m.lanes.n_lanes, Array(m.lanes.hz_x.slice(0, 20))], "(it is the identical layout)")
+	# Retried coins are not paid twice: finish the Flight with the coins re-earned.
+	m.flight_coins = 25
+	m.credited = 60
+	m.flight_coins = 55
+	m._credit()
+	check(sv.coins == coins_before_fail + 60 and m.credited == 60, "coins already paid are not paid again after a retry")
+	m.flight_coins = 75
+	m._credit()
+	check(sv.coins == coins_before_fail + 75, "...only what goes beyond is")
+	# One retry per Flight.
+	clear_sky(m)
+	m.lanes.lane_kind[2] = 1
+	m.lanes.lane_count[2] = 1
+	m.lanes.lane_scale[2] = 1.0
+	m.lanes.lane_amp[2] = 0.0
+	m.lanes.lane_vel[2] = 0.0
+	m.balloon.position = Vector2(300.0, LanesS.BAND_BOTTOM - 2.5 * m.lanes.lane_h)
+	m.balloon.on_ground = false
+	m.lanes.hz_x[2 * LanesS.MAX_PER_LANE] = 300.0
+	step(m, 0.1, 0)
+	check(m.screen == MainS.SCREEN_DEAD and not m.hud.retry_btn.visible, "only %d retry per Flight" % int(tn.ad_retry_max_per_flight))
+	# Interstitial: only between Flights, once every few Flights.
+	sv.reset_all()
+	var ads_seen: int = m.ads.shown
+	var interstitials := 0
+	var started := 0
+	for n in 9:
+		m.start_flight(0)
+		started += 1
+		clear_sky(m)
+		m.fuel = 100.0
+		step(m, 1.0, 0)   # (play on the ground; nothing may interrupt it)
+		check(not m.hud.ad_active, "no ad during play (Flight %d)" % (n + 1))
+		m.fuel = 0.0
+		step(m, 60.0, 1)
+		check(m.screen == MainS.SCREEN_DEAD, "Flight %d ended" % (n + 1))
+		var before: int = m.ads.shown
+		m.hud.again_pressed.emit()
+		if m.ads.shown > before:
+			interstitials += 1
+			check(m.ads.last_kind == "interstitial" and m.hud.ad_active and not m.hud.ad_cancel.visible, "the interstitial plays (after Flight %d)" % (n + 1))
+			check(m.screen == MainS.SCREEN_DEAD, "...before the next Flight starts")
+			m.hud.ad_claim.pressed.emit()
+			check(m.screen == MainS.SCREEN_PLAY and not m.hud.ad_active, "closing it starts the next Flight")
+	check(interstitials == 3, "9 Flights: none in the first 2, then after Flights 3, 6 and 9 (%d)" % interstitials)
+	# Never from the Flight screen or during play.
+	sv.data["ad_counter"] = 99
+	sv.data["flights_ended"] = 99
+	m.start_flight(0)
+	var before2: int = m.ads.shown
+	m._proceed(func(): pass)
+	check(m.ads.shown == before2, "_proceed outside the result / failed screens never shows an ad")
+	m.hud.flight_chosen.emit(0)
+	m.hud.fly_pressed.emit()
+	check(m.ads.shown == before2 and m.screen == MainS.SCREEN_PLAY, "starting a Flight from its screen never shows an ad")
+	# A finished Flight counts too, and the result buttons go through the interstitial as well.
+	sv.data["ad_counter"] = 2
+	win_flight(m, 0, 0, 5.0)
+	check(m.screen == MainS.SCREEN_RESULT and sv.interstitial_due(), "finishing a Flight also counts toward the interstitial")
+	m.hud.menu_pressed.emit()
+	check(m.hud.ad_active and m.ads.last_kind == "interstitial" and m.screen == MainS.SCREEN_RESULT, "MAP from the result screen plays it first")
+	m.hud.ad_claim.pressed.emit()
+	check(m.screen == MainS.SCREEN_MAP and not sv.interstitial_due(), "...then goes to the map")
+	# The fake ad plays for ad_fake_seconds before it can be claimed.
+	tn.ad_fake_seconds = 2.0
+	m.start_flight(0)
+	clear_sky(m)
+	m.fuel = 30.0
+	step(m, 0.05, 0)
+	m.hud.boost_pressed.emit()
+	check(m.hud.ad_active and m.hud.ad_claim.disabled and m.hud.ad_cancel.visible, "the claim button waits for the fake ad to finish")
+	m.hud._process(1.0)
+	check(m.hud.ad_claim.disabled and m.hud.ad_count.text == "1", "(counting down)")
+	m.hud._process(1.5)
+	check(not m.hud.ad_claim.disabled, "...and opens when it is over")
+	m.hud.ad_claim.pressed.emit()
+	# ads_enabled = false: no offers at all.
+	tn.ads_enabled = false
+	tn.ad_fake_seconds = 0.0
+	m.start_flight(0)
+	clear_sky(m)
+	m.fuel = 30.0
+	step(m, 0.05, 0)
+	check(not m.hud.boost_btn.visible, "ads off: no boost offer")
+	m.fuel = 0.0
+	step(m, 60.0, 1)
+	check(m.screen == MainS.SCREEN_DEAD and not m.hud.retry_btn.visible, "ads off: no retry offer")
+	sv.data["ad_counter"] = 99
+	sv.data["flights_ended"] = 99
+	check(not sv.interstitial_due(), "ads off: no interstitial")
+	tn.ads_enabled = false
 	sv.reset_all()
 	m._show_map()
 

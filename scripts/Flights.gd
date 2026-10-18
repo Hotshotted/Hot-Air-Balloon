@@ -14,6 +14,20 @@ const REGION_BASE := [1.0, 3.5, 6.0, 8.5]
 const FLIGHT_STEP := 0.45
 const LEG_STEP := 0.5
 
+## The Daily Flight: one a day, seeded by the date (UTC). Its region rotates; it is the region's mid Flight, a bit harder.
+const DAILY_INDEX := 3
+static var debug_today := -1        # ?tune / tests: pretend it is this day
+
+## Days since 1970-01-01 (UTC).
+static func today() -> int:
+	return debug_today if debug_today >= 0 else int(floor(Time.get_unix_time_from_system() / 86400.0))
+
+static func daily_region(day: int) -> int:
+	return posmod(day, REGION_COUNT)
+
+static func daily_seed(day: int) -> int:
+	return day * 7919 + 31337
+
 static func region_of(id: int) -> int:
 	return clampi(id / PER_REGION, 0, REGION_COUNT - 1)
 

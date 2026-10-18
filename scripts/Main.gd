@@ -26,6 +26,7 @@ var last_reason := ""
 var last_bonus := 0
 var last_stars := 0
 var last_propane_bonus := 0
+var last_daily_bonus := 0
 var last_postcard: Array = []        # [region, level] awarded by the Flight just finished
 var burn_override := -1             # tests: 1 = burner held, 0 = released, -1 = read the real input
 var tune_panel: TunePanel
@@ -35,6 +36,15 @@ var hud: Hud
 var sim_time := 0.0                 # seconds of simulation this Flight (should track the wall clock minus pauses)
 var _warming := false
 var _prog_key := -1
+var ads: Ads
+var credited := 0                   # coins of this Flight already paid into the save (a retried leg is not paid twice)
+var boosts_used := 0
+var retries_used := 0
+var snap_fuel := 0.0                # the state at the start of the current leg (a rewarded retry goes back to it)
+var snap_coins := 0
+var snap_picked := 0
+var snap_score := 0
+var eff_add := 0.0                  # the Daily Flight is a little harder than its region's mid Flight
 var _air_pct := -1
 static var _warmed := false         # the pre-warm only ever runs once per page load
 
@@ -52,18 +62,22 @@ func _ready() -> void:
 	hud.fly_pressed.connect(func(): start_flight(selected))
 	hud.prev_pressed.connect(func(): _select(selected - 1))
 	hud.next_pressed.connect(func(): _select(selected + 1))
-	hud.again_pressed.connect(func(): start_flight(flight_id))
-	hud.menu_pressed.connect(_show_map)
+	ads = Ads.new(hud)
+	hud.again_pressed.connect(func(): _proceed(func(): start_flight(flight_id)))
+	hud.menu_pressed.connect(func(): _proceed(_show_map))
 	hud.back_pressed.connect(_show_map)
+	hud.daily_pressed.connect(_open_daily)
+	hud.boost_pressed.connect(_on_boost)
+	hud.retry_pressed.connect(_on_retry)
 	hud.album_pressed.connect(_show_album)
 	hud.album_closed.connect(_show_map)
 	hud.shop_pressed.connect(_show_shop)
 	hud.shop_closed.connect(_show_map)
 	hud.flight_chosen.connect(func(id: int): selected = id; _show_menu())
-	hud.next_flight_pressed.connect(_on_next_flight)
+	hud.next_flight_pressed.connect(func(): _proceed(_on_next_flight))
 	selected = Save.suggested_flight()
 	_set_flight(selected)
-	lanes.setup(Flights.eff_level(flight_region, flight_index, 0), false, Flights.leg_seed(flight_seed, 0), flight_region)
+	lanes.setup(_eff(0), false, Flights.leg_seed(flight_seed, 0), flight_region)
 	balloon.reset()
 	fuel = Tuning.propane_start
 	hud.set_fuel(1.0)
@@ -78,17 +92,30 @@ func _ready() -> void:
 
 func _set_flight(id: int) -> void:
 	flight_id = id
-	flight_region = Flights.region_of(id)
-	flight_index = Flights.index_of(id)
-	flight_seed = Flights.seed_of(id)
+	if id == Flights.DAILY:   # the Daily Flight: today's seed and region, the region's mid Flight, a bit harder
+		var day := Flights.today()
+		flight_region = Flights.daily_region(day)
+		flight_index = Flights.DAILY_INDEX
+		flight_seed = Flights.daily_seed(day)
+		eff_add = Tuning.daily_level_bonus
+	else:
+		flight_region = Flights.region_of(id)
+		flight_index = Flights.index_of(id)
+		flight_seed = Flights.seed_of(id)
+		eff_add = 0.0
+
+func _eff(l: int) -> float:
+	return Flights.eff_level(flight_region, flight_index, l) + eff_add
 
 func _flight_name(id: int) -> String:
+	if id == Flights.DAILY:
+		return "DAILY FLIGHT"
 	return "%s %d" % [String(Regions.NAMES[Flights.region_of(id)]).to_upper(), Flights.index_of(id) + 1]
 
 # ---- map and Flight screen ----
 
 func _select(id: int) -> void:
-	selected = clampi(id, 0, Flights.TOTAL - 1)
+	selected = clampi(id, 0, Flights.TOTAL - 1) if id != Flights.DAILY else id
 	_refresh_menu()
 
 ## The world map (the home screen).
@@ -124,15 +151,28 @@ func _show_menu() -> void:
 	lanes.visible = true
 	balloon.visible = true
 	_set_flight(selected)
-	lanes.setup(Flights.eff_level(flight_region, flight_index, 0), false, Flights.leg_seed(flight_seed, 0), flight_region)
+	lanes.setup(_eff(0), false, Flights.leg_seed(flight_seed, 0), flight_region)
 	balloon.reset()
 	hud.set_flight_title("")
 	hud.set_air("")
 	hud.set_flight_hud(false)
 	_refresh_menu()
 
+func _open_daily() -> void:
+	selected = Flights.DAILY
+	_show_menu()
+
 func _refresh_menu() -> void:
 	if screen != SCREEN_MENU:
+		return
+	if selected == Flights.DAILY:
+		var day := Flights.today()
+		var dr := Flights.daily_region(day)
+		var done := Save.daily_done(day)
+		var dinfo := "One Flight a day, the same for everyone that day.\n%s\nBonus %d coins, +%d for every day of the streak.\nStreak: %d day%s" % [
+			"Completed today: no bonus until tomorrow." if done else "Complete it for the daily bonus!",
+			roundi(Tuning.daily_bonus_coins), roundi(Tuning.daily_streak_bonus), Save.daily_streak_now(day), "" if Save.daily_streak_now(day) == 1 else "s"]
+		hud.show_menu(Regions.NAMES[dr], Regions.BLURB[dr], "DAILY FLIGHT", false, false, false, dinfo, false, false, true, true)
 		return
 	var id := selected
 	var st := Save.stars_of(id)
@@ -210,6 +250,9 @@ func start_flight(id: int) -> void:
 	score = 0
 	flight_coins = 0
 	coins_picked = 0
+	credited = 0
+	boosts_used = 0
+	retries_used = 0
 	fuel = Tuning.propane_start
 	sim_time = 0.0
 	_run_start_ms = Time.get_ticks_msec()
@@ -223,13 +266,17 @@ func start_flight(id: int) -> void:
 	_begin_leg()
 
 func _begin_leg() -> void:
-	lanes.setup(Flights.eff_level(flight_region, flight_index, leg), false, Flights.leg_seed(flight_seed, leg), flight_region)
+	lanes.setup(_eff(leg), false, Flights.leg_seed(flight_seed, leg), flight_region)
 	lanes.visible = true
 	lanes.clear_fx()
 	balloon.reset()
 	balloon.visible = true
 	leg_time = 0.0
 	leg_started = false
+	snap_fuel = fuel
+	snap_coins = flight_coins
+	snap_picked = coins_picked
+	snap_score = score
 	hud.set_flight_hud(true)
 	hud.hide_overlays()
 	hud.set_flight_title("%s   LEG %d/%d" % [_flight_name(flight_id), leg + 1, int(Tuning.legs_per_flight)])
@@ -251,8 +298,10 @@ func _fail(reason: String) -> void:
 	screen = SCREEN_DEAD
 	last_reason = reason
 	last_stars = 0
-	Save.add_coins(flight_coins)
-	hud.show_dead("Leg %d of %d\n%s\nCoins kept: %d" % [leg + 1, int(Tuning.legs_per_flight), reason, flight_coins])
+	_credit()
+	Save.note_flight_ended()
+	var can_retry := Tuning.ads_enabled and retries_used < int(Tuning.ad_retry_max_per_flight)
+	hud.show_dead("Leg %d of %d\n%s\nCoins kept: %d" % [leg + 1, int(Tuning.legs_per_flight), reason, flight_coins], can_retry)
 
 func _crash(kind: int) -> void:
 	lanes.burst(balloon.position, Color(1.0, 0.45, 0.15), 18, 420.0)
@@ -284,23 +333,81 @@ func _finish_flight() -> void:
 	flight_coins += last_propane_bonus
 	last_stars = Flights.stars_for(true, fuel, coins_picked)
 	var had := Save.stars_of(flight_id)
-	Save.record_flight(flight_id, last_stars, score)
-	Save.add_coins(flight_coins)
+	var daily := flight_id == Flights.DAILY
+	last_daily_bonus = 0
+	if daily:   # the Daily Flight: a bonus for the first completion of the day and the streak; no stars are recorded
+		last_daily_bonus = Save.complete_daily(Flights.today())
+		flight_coins += last_daily_bonus
+	else:
+		Save.record_flight(flight_id, last_stars, score)
+	_credit()
+	Save.note_flight_ended()
 	screen = SCREEN_RESULT
 	var tgt_p := int(Flights.propane_target())
 	var summary := "Score %s\nCoins earned: %d   (propane bonus %d)" % [Tuning.fmt(float(score)), flight_coins, last_propane_bonus]
+	if daily:
+		var day := Flights.today()
+		summary += ("\nDAILY BONUS +%d   streak %d day%s" % [last_daily_bonus, Save.daily_streak_now(day), "" if Save.daily_streak_now(day) == 1 else "s"]) if last_daily_bonus > 0 else "\nDaily bonus already claimed today"
+	else:
+		summary += ("\nNEW BEST: %d stars" % last_stars if last_stars > had else "") + _region_news()
+	hud.result_header.text = "DAILY FLIGHT COMPLETE!" if daily else "FLIGHT COMPLETE!"
 	hud.show_result("Flight completed",
 		"Propane left %d  (needs %d)" % [int(fuel), tgt_p],
 		"Coins collected %d  (needs %d)" % [coins_picked, Flights.coin_target()],
 		true, last_stars >= 2 and fuel >= Flights.propane_target(), coins_picked >= Flights.coin_target(),
-		summary + ("\nNEW BEST: %d stars" % last_stars if last_stars > had else "") + _region_news(),
-		flight_id + 1 < Flights.TOTAL and Flights.region_of(flight_id + 1) == flight_region and Save.flight_unlocked(flight_id + 1))
-	var pc := Save.update_postcards()   # the region's last Flight earns its postcard; 3 stars on all six make it gold
-	if not pc.is_empty():
-		last_postcard = pc
-		hud.show_postcard(pc[0], pc[1])
+		summary, not daily and flight_id + 1 < Flights.TOTAL and Flights.region_of(flight_id + 1) == flight_region and Save.flight_unlocked(flight_id + 1))
+	last_postcard = []
+	if not daily:
+		var pc := Save.update_postcards()   # the region's last Flight earns its postcard; 3 stars on all six make it gold
+		if not pc.is_empty():
+			last_postcard = pc
+			hud.show_postcard(pc[0], pc[1])
+
+## Pay the coins earned so far into the save (only what has not been paid yet).
+func _credit() -> void:
+	var d := flight_coins - credited
+	if d > 0:
+		Save.add_coins(d)
+		credited = flight_coins
+
+## Between Flights (result / failed screens) an interstitial may come first; then `action` runs.
+func _proceed(action: Callable) -> void:
+	if (screen == SCREEN_DEAD or screen == SCREEN_RESULT) and Save.interstitial_due() and not ads.is_showing():
+		Save.interstitial_shown()
+		ads.show("interstitial", func(_ok: bool): action.call())
 	else:
-		last_postcard = []
+		action.call()
+
+## Rewarded: "+50% propane" on the ground at the start of a leg.
+func _on_boost() -> void:
+	if screen != SCREEN_PLAY or ads.is_showing():
+		return
+	ads.show("boost", func(ok: bool):
+		if ok:
+			boosts_used += 1
+			fuel = minf(fuel + Tuning.propane_start * Tuning.ad_boost_frac, Tuning.propane_start)
+			hud.set_fuel(fuel / Tuning.propane_start)
+			_update_progress())
+
+## Rewarded: "Retry this leg" after a failed one: back to the start of the leg with its propane, coins and score.
+func _on_retry() -> void:
+	if screen != SCREEN_DEAD or ads.is_showing():
+		return
+	ads.show("retry", func(ok: bool):
+		if ok:
+			retries_used += 1
+			fuel = snap_fuel
+			flight_coins = snap_coins
+			coins_picked = snap_picked
+			score = snap_score
+			hud.set_score(score)
+			hud.set_flight_coins(flight_coins)
+			_begin_leg())
+
+func _update_boost_button() -> void:
+	var want := Tuning.ads_enabled and balloon.on_ground and not leg_started and boosts_used < int(Tuning.ad_boost_max_per_flight) and fuel <= Tuning.ad_boost_below * Tuning.propane_start
+	if want != hud.boost_btn.visible:
+		hud.boost_btn.visible = want
 
 ## "NEW REGION UNLOCKED" for the result screen, once per region.
 func _region_news() -> String:
@@ -310,14 +417,17 @@ func _region_news() -> String:
 func _holding() -> bool:
 	if burn_override >= 0:
 		return burn_override == 1
-	if tune_panel and tune_panel.is_open:
+	if (tune_panel and tune_panel.is_open) or hud.ad_active:
 		return false
 	if Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_UP):
 		return true
-	return Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not TunePanel.button_hit(get_viewport().get_mouse_position())
+	var mouse := get_viewport().get_mouse_position()
+	return Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not TunePanel.button_hit(mouse) and not (hud.boost_btn.visible and hud.boost_btn.get_global_rect().has_point(mouse))
 
 ## One simulation step of `dt` seconds.
 func sim(dt: float) -> void:
+	if hud.ad_active:   # an ad is up: the world stands still
+		return
 	sim_time += dt
 	hud.tick(dt)
 	match screen:
@@ -357,6 +467,7 @@ func _play(dt: float) -> void:
 		hud.set_flight_coins(flight_coins)
 	hud.set_fuel(fuel / Tuning.propane_start)
 	_update_progress()
+	_update_boost_button()
 	if not DebugFlags.god and lanes.hits(balloon):
 		_crash(lanes.last_hit_kind)
 	elif balloon.position.y <= Lanes.GOAL_Y:

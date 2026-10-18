@@ -56,6 +56,17 @@ const ENTRIES := [
 	["leg_coins", "Coins per leg cleared", 0.0, 50.0, 1.0],
 	["coin_value", "Coins per floating coin", 0.0, 30.0, 1.0],
 	["propane_coins", "Coins per propane left", 0.0, 2.0, 0.05],
+	["daily_bonus_coins", "Daily: bonus coins", 0.0, 500.0, 10.0],
+	["daily_streak_bonus", "Daily: coins per streak day", 0.0, 100.0, 5.0],
+	["daily_streak_cap", "Daily: streak cap (days)", 1.0, 30.0, 1.0],
+	["daily_level_bonus", "Daily: extra difficulty", 0.0, 3.0, 0.1],
+	["ad_fake_seconds", "Ads: fake ad length (s)", 0.0, 6.0, 0.5],
+	["ad_boost_frac", "Ads: propane boost (frac of tank)", 0.1, 1.0, 0.05],
+	["ad_boost_below", "Ads: offer boost below (frac)", 0.1, 1.0, 0.05],
+	["ad_boost_max_per_flight", "Ads: boosts per Flight", 0.0, 5.0, 1.0],
+	["ad_retry_max_per_flight", "Ads: retries per Flight", 0.0, 5.0, 1.0],
+	["ad_interstitial_every", "Ads: interstitial every N Flights", 1.0, 10.0, 1.0],
+	["ad_interstitial_after", "Ads: none until Flight N", 0.0, 10.0, 1.0],
 	["level_points", "Points per level", 0.0, 1000.0, 10.0],
 	["speed_bonus_per_s", "Speed bonus per s under par", 0.0, 100.0, 1.0],
 	["par_base", "Par time base (s)", 2.0, 40.0, 0.5],
@@ -65,6 +76,7 @@ const ENTRIES := [
 ## [Tuning property, label]: on/off switches.
 const TOGGLES := [
 	["edge_wrap", "Screen edges wrap (off = block)"],
+	["ads_enabled", "Ads on (stubs)"],
 ]
 
 ## Screen rect of the TUNE button, so the game can ignore touches that land on it.
@@ -210,6 +222,15 @@ func build() -> void:
 	save_row2.add_child(unlock)
 	save_row2.add_child(reset_save)
 	column.add_child(save_row2)
+	var save_row3 := HBoxContainer.new()
+	save_row3.add_theme_constant_override("separation", 20)
+	var reset_daily := _make_button("Reset daily", 32)
+	reset_daily.pressed.connect(func(): Save.reset_daily(); _out.text = "Daily Flight and streak reset."; save_changed.emit())
+	var next_day := _make_button("Next day", 32)
+	next_day.pressed.connect(func(): Flights.debug_today = Flights.today() + 1; _out.text = "Pretending it is day %d." % Flights.today(); save_changed.emit())
+	save_row3.add_child(reset_daily)
+	save_row3.add_child(next_day)
+	column.add_child(save_row3)
 	_out = _make_label("", 26, HORIZONTAL_ALIGNMENT_LEFT)
 	_out.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	_out.custom_minimum_size = Vector2(0, 120)

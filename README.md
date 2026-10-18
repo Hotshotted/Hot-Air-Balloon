@@ -38,6 +38,18 @@ Bought with coins; purely visual (hit circles and flight are never affected). Eq
 
 A Flight pays about 100 coins, the cheapest item costs 150 (about two Flights) and the full set about 8,300 (some 80 Flights). All prices are in `scripts/Cosmetics.gd`.
 
+## Daily Flight
+
+One special Flight a day (button on the map), seeded by the UTC date: everyone gets the same one that day, in a region that rotates daily, a little harder than the region's mid Flight. The first completion each day pays a bonus (100 coins) plus 10 for every day of the streak (capped at 7 days); missing a day resets the streak. It does not record stars or postcards.
+
+## Ads (stubs)
+
+No SDK yet: a fake "Ad playing" screen stands in (`Ads.gd`, `Hud.show_ad`). All frequency settings are in `Tuning.gd` / the `?tune` panel.
+
+- **Rewarded:** "+50% propane" on the ground at the start of a leg (when the tank is low), and "Retry this leg" after failing one (back to the leg's starting propane, coins and score; coins already paid are not paid twice).
+- **Interstitial:** only between Flights (from the result / failed screens, never during play), once every 3 Flights and not before the 3rd Flight.
+- The world stands still while an ad is up. `ads_enabled` switches everything off.
+
 ## Debug flags (URL query)
 
 | Flag | Effect |
@@ -47,6 +59,8 @@ A Flight pays about 100 coins, the cheapest item costs 150 (about two Flights) a
 | `?level=N` | start at level N |
 | `?god` | hazards cannot hurt |
 | `?noprewarm` | skip the start-up pre-warm splash |
+
+In the `?tune` panel: add coins, unlock all regions, 3-star everything, reset save, reset daily, next day (to test streaks), and sliders for every setting above.
 
 Combine with `&`, e.g. `?tune&perf&level=6`. Active flags are shown next to the build stamp (commit + UTC time, bottom-right).
 

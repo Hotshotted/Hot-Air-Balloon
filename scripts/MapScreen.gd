@@ -6,6 +6,7 @@ extends Control
 signal flight_chosen(id: int)
 signal album_pressed
 signal shop_pressed
+signal daily_pressed
 
 const TOP := 124.0
 const BLOCK_H := 396.0
@@ -25,6 +26,7 @@ var coins_label: Label
 var stars_label: Label
 var album_btn: Button
 var shop_btn: Button
+var daily_btn: Button
 var suggested := 0
 
 func _ready() -> void:
@@ -41,6 +43,9 @@ func _ready() -> void:
 	shop_btn = Ui.button("SHOP", 44, Vector2(380, 1790), Vector2(320, 100), Color(0.2, 0.6, 0.5))
 	shop_btn.pressed.connect(func(): shop_pressed.emit())
 	add_child(shop_btn)
+	daily_btn = Ui.button("DAILY", 40, Vector2(730, 1790), Vector2(320, 100), Color(0.9, 0.45, 0.2))
+	daily_btn.pressed.connect(func(): daily_pressed.emit())
+	add_child(daily_btn)
 	# Make sure every button colour is in the style cache now, not the first time it is needed.
 	for c in [COL_LOCKED, COL_OPEN, COL_PLAYED, COL_GOLD]:
 		Ui.button("", 20, Vector2.ZERO, Vector2.ONE, c).free()
@@ -81,6 +86,9 @@ func refresh() -> void:
 	for r in Regions.COUNT:
 		cards += 1 if Save.postcard_of(r) > 0 else 0
 	album_btn.text = "ALBUM %d/%d" % [cards, Regions.COUNT]
+	var day := Flights.today()
+	var streak := Save.daily_streak_now(day)
+	daily_btn.text = ("DAILY  done  x%d" % streak) if Save.daily_done(day) else (("DAILY  streak %d" % streak) if streak > 0 else "DAILY  new!")
 	suggested = Save.suggested_flight()
 	for r in Regions.COUNT:
 		var open := Save.region_unlocked(r)
