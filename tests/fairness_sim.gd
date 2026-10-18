@@ -21,17 +21,17 @@ const BUCKET_Y := 14.0
 var scheme := "lanes"
 var dt := 0.1
 var margin := 18.0
-var cap := 3000
+var cap := 600
+var tmax_s := 45.0
 var tn: Node
 var lanes: Node2D
 var bal: Node2D
 var recipe
 var K := 0
 # per lane, per step
-var lane_w := []         # [lane] PackedFloat32Array of wind per step
-var hz_px := []          # [lane*MAX+j] PackedFloat32Array x per step
-var hz_py := []          # [lane*MAX+j] PackedFloat32Array y per step
-var gs_py := []
+var lane_w := PackedFloat32Array()   # [lane * (K+1) + step]: the wind
+var hz_px := PackedFloat32Array()    # [(lane * MAX_PER_LANE + j) * (K+1) + step]: hazard x
+var hz_py := PackedFloat32Array()    # ...and y
 var ship_xs := PackedFloat32Array()
 var lt_on_k := PackedByteArray()
 var lt_x_k := PackedFloat32Array()
@@ -52,6 +52,7 @@ func _initialize() -> void:
 			"dt": dt = float(kv[1])
 			"margin": margin = float(kv[1])
 			"cap": cap = int(kv[1])
+			"tmax": tmax_s = float(kv[1])
 			"flights":
 				if kv[1] != "all":
 					for x in kv[1].split(","):
@@ -112,21 +113,11 @@ func _initialize() -> void:
 func _prepare(tmax: float) -> void:
 	var L = lanes
 	K = int(ceil(tmax / dt))
-	lane_w.clear()
-	hz_px.clear()
-	hz_py.clear()
-	gs_py.clear()
 	var MAXP: int = L.MAX_PER_LANE
-	for i in L.MAX_LANES:
-		lane_w.append(PackedFloat32Array())
-		(lane_w[i] as PackedFloat32Array).resize(K + 1)
-		for j in MAXP:
-			var a := PackedFloat32Array()
-			a.resize(K + 1)
-			hz_px.append(a)
-			var b := PackedFloat32Array()
-			b.resize(K + 1)
-			hz_py.append(b)
+	var K1 := K + 1
+	lane_w.resize(L.MAX_LANES * K1)
+	hz_px.resize(L.MAX_LANES * MAXP * K1)
+	hz_py.resize(L.MAX_LANES * MAXP * K1)
 	var acc := PackedFloat32Array()
 	acc.resize(L.MAX_LANES)
 	for k in K + 1:
@@ -137,17 +128,17 @@ func _prepare(tmax: float) -> void:
 			var k0: int = L.lane_kind[i]
 			if L.lane_rev[i] > 0.0:
 				w = base * clampf(3.0 * sin(PI * (t + L.lane_rev_off[i]) / L.lane_rev[i]), -1.0, 1.0)
-			lane_w[i][k] = w
+			lane_w[i * K1 + k] = w
 			var vel: float = L._haz_vel(w, k0) if k0 >= 0 else w
 			for j in L.lane_count[i]:
 				var idx: int = i * MAXP + j
 				var x: float = L.hz_x[idx] + acc[i]
-				hz_px[idx][k] = -L.MARGIN + fposmod(x + L.MARGIN, L.RING)
+				hz_px[idx * K1 + k] = -L.MARGIN + fposmod(x + L.MARGIN, L.RING)
 				var cy: float = L._lane_cy(i)
 				if L.lane_beat[i] > 0.0:
-					hz_py[idx][k] = cy - L.lane_amp[i] * 0.45 + L.lane_amp[i] * 0.9 * tn.kite_dip * L._dip(fposmod(t / L.lane_beat[i] + L.lane_gph[i] / TAU, 1.0))
+					hz_py[idx * K1 + k] = cy - L.lane_amp[i] * 0.45 + L.lane_amp[i] * 0.9 * tn.kite_dip * L._dip(fposmod(t / L.lane_beat[i] + L.lane_gph[i] / TAU, 1.0))
 				else:
-					hz_py[idx][k] = cy + sin(t * float(L.KIND_RATE[k0]) + L.hz_phase[idx]) * L.lane_amp[i]
+					hz_py[idx * K1 + k] = cy + sin(t * float(L.KIND_RATE[k0]) + L.hz_phase[idx]) * L.lane_amp[i]
 			acc[i] += vel * dt
 	ship_xs.resize(K + 1)
 	var sx: float = L.ship_x
@@ -188,8 +179,8 @@ func _hits(x: float, y: float, k: int) -> bool:
 			var ey: float = float(L.KIND_HY[kd]) * L.lane_scale[i] + r
 			for j in L.lane_count[i]:
 				var idx: int = i * L.MAX_PER_LANE + j
-				var dx: float = (x - hz_px[idx][k]) / ex
-				var dy: float = (py - hz_py[idx][k]) / ey
+				var dx: float = (x - hz_px[idx * (K + 1) + k]) / ex
+				var dy: float = (py - hz_py[idx * (K + 1) + k]) / ey
 				if dx * dx + dy * dy < 1.0:
 					return true
 	return false
@@ -209,12 +200,12 @@ func _wind_at(y: float, k: int) -> float:
 	var L = lanes
 	if y >= bal.floor_y() - 0.01:
 		return 0.0
-	return lane_w[L.lane_of(y)][k]
+	return lane_w[L.lane_of(y) * (K + 1) + k]
 
 ## [time of the first success or -1, propane the cheapest path used]
 func _solve() -> Array:
 	var L = lanes
-	_prepare(70.0)
+	_prepare(tmax_s)
 	var s: float = bal.s()
 	var half: float = bal.WIDTH * 0.5 * s
 	var fy: float = bal.floor_y()

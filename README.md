@@ -131,4 +131,4 @@ Combine with `&`, e.g. `?tune&perf&level=6`. Active flags and the control scheme
 - All feel values live in `scripts/Tuning.gd` (an autoload, so the `?tune` panel edits them live).
 - Pooling: hazards, pickups, particles and sparks live in fixed arrays filled in place when a level starts; restarting is in place; a start-up pre-warm draws every shape behind a splash. Nothing is allocated while playing (the smoke test checks it).
 - CI (`.github/workflows/deploy.yml`): import, headless smoke test (`tests/smoke_test.gd`), web export with a commit-hash name and a stale-page check, deploy to GitHub Pages.
-- `tests/balance_sim.gd` is a look-ahead autopilot that plays whole levels, for a feel of the difficulty curve (not run in CI).
+- `tests/fairness_sim.gd` is a planner that searches every generated leg for a clear path under a control scheme's rules (not run in CI; see its header).
