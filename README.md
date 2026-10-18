@@ -24,6 +24,10 @@ A map of 4 regions with 6 Flights each. A Flight opens when the one before it is
 
 Difficulty rises across the 6 Flights of a region (more hazard kinds, denser layers, faster winds) and from region to region.
 
+## Postcards
+
+Completing a region's last Flight awards its postcard: a small illustrated card of the region built from primitives, with a title. 3-starring all six Flights of the region upgrades it to a gold postcard (gold frame, corner stars, ribbon). The Postcard Album (button on the map) shows all four; tap one to see it large.
+
 ## Debug flags (URL query)
 
 | Flag | Effect |

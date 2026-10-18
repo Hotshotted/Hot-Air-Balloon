@@ -72,6 +72,23 @@ func clear_sky(m: Node) -> void:
 		m.lanes.lane_kind[i] = -1
 		m.lanes.pk_on[i] = 0
 
+## Fly a whole Flight by teleporting through its five legs (coins / fuel set before the 4th leg).
+func win_flight(m: Node, fid: int, coins: int, fuel: float) -> void:
+	m.start_flight(fid)
+	for l in 5:
+		clear_sky(m)
+		m.balloon.position = Vector2(540.0, LanesS.GOAL_Y + 4.0)
+		m.balloon.on_ground = false
+		m.balloon.rise = 250.0
+		m.balloon.heat = 1.0
+		m.leg_started = true
+		if l == 3:
+			m.coins_picked = coins
+			m.fuel = fuel
+		step(m, 0.05, 1)
+		if l < 4:
+			step(m, 1.5, 0)
+
 func tap(m: Node, pos: Vector2) -> void:
 	var ev := InputEventMouseButton.new()
 	ev.button_index = MOUSE_BUTTON_LEFT
@@ -704,7 +721,81 @@ func _run() -> void:
 	check(m.selected == 0 and m.screen == MainS.SCREEN_MENU, "tapping a node opens the Flight screen")
 	# Save v2: an old (v1) file gets the new fields.
 	var v1: Dictionary = sv._migrate({"version": 1, "coins": 9, "stars": [3], "best_score": [5]})
-	check(v1["seen_regions"].size() == 4 and v1["seen_regions"][0] == true and v1["last_flight"] == 0 and v1["coins"] == 9 and v1["version"] == 2, "a v1 save is migrated to v2")
+	check(v1["seen_regions"].size() == 4 and v1["seen_regions"][0] == true and v1["last_flight"] == 0 and v1["coins"] == 9 and v1["version"] == sv.VERSION, "a v1 save is migrated to the current version")
+	m._show_map()
+
+	# ---- 6d. postcards ----
+	print("6d. postcards")
+	sv.reset_all()
+	check(sv.postcard_of(0) == 0 and sv.postcard_of(3) == 0, "no postcards at first")
+	win_flight(m, 2, 0, 5.0)
+	check(m.screen == MainS.SCREEN_RESULT and sv.postcard_of(0) == 0 and not m.hud.card_p.visible, "a Flight in the middle of a region earns no postcard")
+	win_flight(m, 5, 0, 5.0)
+	check(m.last_stars == 1 and sv.postcard_of(0) == 1, "completing a region's last Flight awards its postcard")
+	check(m.hud.card_p.visible and m.hud.card_header.text == "NEW POSTCARD!" and m.hud.card_view.region == 0 and m.hud.card_view.state == 1, "the award screen shows the new postcard")
+	check(m.hud.card_view.title.text == "Greetings from the Countryside", "...with its title")
+	m.hud.card_p.get_child(m.hud.card_p.get_child_count() - 1).pressed.emit()
+	check(not m.hud.card_p.visible and m.hud.result_p.visible, "CONTINUE returns to the result screen")
+	win_flight(m, 5, 0, 5.0)
+	check(m.last_postcard.is_empty() and not m.hud.card_p.visible and sv.postcard_of(0) == 1, "replaying does not award it again")
+	sv.reset_all()
+	m.start_flight(5)
+	m.fuel = 0.0
+	step(m, 60.0, 1)
+	check(m.screen == MainS.SCREEN_DEAD and sv.postcard_of(0) == 0, "failing the last Flight earns nothing")
+	sv.reset_all()
+	for i in 5:
+		sv.data["stars"][i] = 3
+	win_flight(m, 5, 9, 60.0)
+	check(m.last_stars == 3 and sv.postcard_of(0) == 2 and m.hud.card_header.text == "GOLD POSTCARD!" and m.hud.card_view.state == 2, "3 stars on every Flight of a region: the gold postcard")
+	sv.reset_all()
+	for i in 5:
+		sv.data["stars"][i] = 3
+	sv.data["stars"][5] = 2
+	sv.data["postcards"][0] = 1
+	win_flight(m, 5, 9, 60.0)
+	check(sv.postcard_of(0) == 2 and m.last_postcard == [0, 2], "improving the last Flight to 3 stars upgrades the postcard to gold")
+	sv.reset_all()
+	for i in 6:
+		sv.data["stars"][6 + i] = 1
+	win_flight(m, 11, 0, 5.0)
+	check(sv.postcard_of(1) == 1 and sv.postcard_of(0) == 0 and m.hud.card_view.region == 1, "each region has its own postcard (Alps)")
+	sv.reset_all()
+	sv.three_star_everything()
+	check(sv.postcard_of(0) == 2 and sv.postcard_of(1) == 2 and sv.postcard_of(2) == 2 and sv.postcard_of(3) == 2, "debug 3-star everything: all four gold")
+	# The album.
+	sv.reset_all()
+	sv.data["postcards"] = [2, 1, 0, 0]
+	m._show_map()
+	check(not m.hud.gauge.visible and not m.hud.prog.visible and not m.hud.score_label.visible, "no flight readouts on the map")
+	check(m.hud.map.album_btn.text == "ALBUM 2/4", "the map's album button counts postcards")
+	var snap_a := snap()
+	m.hud.map.album_btn.pressed.emit()
+	var al = m.hud.album
+	check(m.screen == MainS.SCREEN_ALBUM and al.visible and not m.hud.map.visible, "ALBUM opens the album from the map")
+	check(al.views[0].state == 2 and al.views[1].state == 1 and al.views[2].state == 0, "gold, normal and not-yet-earned slots")
+	check(al.views[0].title.text.contains("Countryside") and al.views[2].title.text == "???" and al.views[2].hint.text.contains("Sahara"), "titles and hints")
+	check(al.captions[1].text.contains("0/6") and al.captions[0].text == "GOLD postcard" and al.count_label.text == "2 / 4 postcards    1 gold", "captions show progress to gold")
+	al._zoom(2)
+	check(not al.zoom_p.visible, "an unearned slot does not open")
+	al.views[1].tapped.emit()
+	check(al.zoom_p.visible and al.zoom_view.region == 1 and al.zoom_view.state == 1, "tapping a postcard shows it large")
+	al.refresh()
+	check(not al.zoom_p.visible, "refresh closes the zoom")
+	al.back_pressed.emit()
+	check(m.screen == MainS.SCREEN_MAP and not al.visible and m.hud.map.visible, "BACK returns to the map")
+	m.hud.map.album_btn.pressed.emit()
+	al.views[0].tapped.emit()
+	m.hud.album_closed.emit()
+	await process_frame
+	check(same(snap_a, snap()), "opening and closing the album allocates nothing")
+	var titles := {}
+	for r in 4:
+		al.views[0].set_card(r, 1)
+		titles[al.views[0].title.text] = true
+	check(titles.size() == 4, "four different postcards")
+	check(sv._migrate({"version": 2, "coins": 3})["postcards"] == [0, 0, 0, 0], "a v2 save gets an empty album")
+	sv.reset_all()
 	m._show_map()
 
 	# ---- 7. fairness ----

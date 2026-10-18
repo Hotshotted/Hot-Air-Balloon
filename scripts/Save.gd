@@ -3,7 +3,7 @@ extends Node
 ## storage on the web). New versions only ADD fields: _migrate() fills anything an older file lacks from the
 ## defaults, so old saves keep working. Tests switch `persist` off.
 
-const VERSION := 2
+const VERSION := 3
 const PATH := "user://wind_layers_save.json"
 ## Stars needed in a region (of 18) to open the next one.
 const REGION_UNLOCK_STARS := 12
@@ -31,6 +31,7 @@ func _defaults() -> Dictionary:
 		"unlock_all": false,      # ?tune debug: every region and Flight open
 		"seen_regions": [true, false, false, false],   # regions whose "unlocked" message has been shown (v2)
 		"last_flight": 0,         # the Flight last opened (v2)
+		"postcards": [0, 0, 0, 0],   # per region: 0 none, 1 postcard, 2 gold postcard (v3)
 	}
 
 func _load() -> void:
@@ -52,11 +53,11 @@ func _migrate(old: Dictionary) -> Dictionary:
 		var both_numbers: bool = (typeof(old[k]) == TYPE_FLOAT or typeof(old[k]) == TYPE_INT) and (typeof(d[k]) == TYPE_FLOAT or typeof(d[k]) == TYPE_INT)   # JSON gives floats
 		if both_numbers or typeof(old[k]) == typeof(d[k]):
 			d[k] = old[k]
-	for k in ["stars", "best_score", "seen_regions"]:
+	for k in ["stars", "best_score", "seen_regions", "postcards"]:
 		var arr: Array = d[k]
 		for i in arr.size():
 			arr[i] = bool(arr[i]) if k == "seen_regions" else int(arr[i])
-		while arr.size() < (Flights.REGION_COUNT if k == "seen_regions" else Flights.TOTAL):
+		while arr.size() < (Flights.REGION_COUNT if k == "seen_regions" or k == "postcards" else Flights.TOTAL):
 			arr.append(false if k == "seen_regions" else 0)
 	d["coins"] = int(d["coins"])
 	d["flights_played"] = int(d["flights_played"])
@@ -133,11 +134,38 @@ func take_new_region() -> int:
 			return r
 	return -1
 
+func postcard_of(region: int) -> int:
+	return int(data["postcards"][region])
+
+func region_three_stars(region: int) -> int:
+	var n := 0
+	for i in Flights.PER_REGION:
+		if stars_of(Flights.id_of(region, i)) >= 3:
+			n += 1
+	return n
+
+## Award postcards: completing a region's last Flight earns its postcard, 3 stars on all six upgrade it to gold.
+## Returns [region, new level] of the first change, or [] when nothing changed.
+func update_postcards() -> Array:
+	for r in Flights.REGION_COUNT:
+		var want := 0
+		if stars_of(Flights.id_of(r, Flights.PER_REGION - 1)) >= 1:
+			want = 1
+		if region_three_stars(r) == Flights.PER_REGION:
+			want = 2
+		if want > postcard_of(r):
+			data["postcards"][r] = want
+			save()
+			return [r, want]
+	return []
+
 # ---- debug (?tune) ----
 
 func three_star_everything() -> void:
 	for i in Flights.TOTAL:
 		data["stars"][i] = 3
+	while not update_postcards().is_empty():
+		pass
 	save()
 
 func unlock_everything() -> void:

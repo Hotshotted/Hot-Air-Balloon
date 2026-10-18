@@ -4,7 +4,7 @@ extends Node2D
 ## One scene for the whole session. Restarting is IN PLACE: the pooled hazards, effects and UI nodes
 ## stay alive (and warm); only the game state is reset.
 
-enum { SCREEN_MENU, SCREEN_PLAY, SCREEN_CLEAR, SCREEN_DEAD, SCREEN_RESULT, SCREEN_MAP }
+enum { SCREEN_MENU, SCREEN_PLAY, SCREEN_CLEAR, SCREEN_DEAD, SCREEN_RESULT, SCREEN_MAP, SCREEN_ALBUM }
 ## Seconds the "leg cleared" banner holds before the next leg starts.
 const CLEAR_HOLD := 1.3
 
@@ -26,6 +26,7 @@ var last_reason := ""
 var last_bonus := 0
 var last_stars := 0
 var last_propane_bonus := 0
+var last_postcard: Array = []        # [region, level] awarded by the Flight just finished
 var burn_override := -1             # tests: 1 = burner held, 0 = released, -1 = read the real input
 var tune_panel: TunePanel
 var lanes: Lanes
@@ -54,6 +55,8 @@ func _ready() -> void:
 	hud.again_pressed.connect(func(): start_flight(flight_id))
 	hud.menu_pressed.connect(_show_map)
 	hud.back_pressed.connect(_show_map)
+	hud.album_pressed.connect(_show_album)
+	hud.album_closed.connect(_show_map)
 	hud.flight_chosen.connect(func(id: int): selected = id; _show_menu())
 	hud.next_flight_pressed.connect(_on_next_flight)
 	selected = Save.suggested_flight()
@@ -96,7 +99,15 @@ func _show_map() -> void:
 	hud.set_score(0)
 	hud.set_flight_coins(0)
 	hud.set_air("")
+	hud.set_flight_hud(false)
 	hud.show_map()
+
+func _show_album() -> void:
+	screen = SCREEN_ALBUM
+	lanes.visible = false
+	balloon.visible = false
+	hud.set_flight_hud(false)
+	hud.show_album()
 
 ## The Flight screen: name, stars, what each star needs, FLY.
 func _show_menu() -> void:
@@ -108,6 +119,7 @@ func _show_menu() -> void:
 	balloon.reset()
 	hud.set_flight_title("")
 	hud.set_air("")
+	hud.set_flight_hud(false)
 	_refresh_menu()
 
 func _refresh_menu() -> void:
@@ -206,6 +218,7 @@ func _begin_leg() -> void:
 	balloon.visible = true
 	leg_time = 0.0
 	leg_started = false
+	hud.set_flight_hud(true)
 	hud.hide_overlays()
 	hud.set_flight_title("%s   LEG %d/%d" % [_flight_name(flight_id), leg + 1, int(Tuning.legs_per_flight)])
 	hud.set_fuel(fuel / Tuning.propane_start)
@@ -270,6 +283,12 @@ func _finish_flight() -> void:
 		true, last_stars >= 2 and fuel >= Flights.propane_target(), coins_picked >= Flights.coin_target(),
 		summary + ("\nNEW BEST: %d stars" % last_stars if last_stars > had else "") + _region_news(),
 		flight_id + 1 < Flights.TOTAL and Flights.region_of(flight_id + 1) == flight_region and Save.flight_unlocked(flight_id + 1))
+	var pc := Save.update_postcards()   # the region's last Flight earns its postcard; 3 stars on all six make it gold
+	if not pc.is_empty():
+		last_postcard = pc
+		hud.show_postcard(pc[0], pc[1])
+	else:
+		last_postcard = []
 
 ## "NEW REGION UNLOCKED" for the result screen, once per region.
 func _region_news() -> String:

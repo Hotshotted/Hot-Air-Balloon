@@ -4,6 +4,7 @@ extends Control
 ## stars earned under them. Built once; refresh() recolours and re-texts everything from the save.
 
 signal flight_chosen(id: int)
+signal album_pressed
 
 const TOP := 124.0
 const BLOCK_H := 396.0
@@ -21,6 +22,7 @@ var region_blurbs: Array[Label] = []
 var region_locks: Array[Label] = []
 var coins_label: Label
 var stars_label: Label
+var album_btn: Button
 var suggested := 0
 
 func _ready() -> void:
@@ -31,6 +33,9 @@ func _ready() -> void:
 	add_child(coins_label)
 	stars_label = Ui.label("", 40, HORIZONTAL_ALIGNMENT_LEFT, Vector2(440, 28), Vector2(400, 56))
 	add_child(stars_label)
+	album_btn = Ui.button("ALBUM", 44, Vector2(30, 1790), Vector2(320, 100), Color(0.6, 0.4, 0.8))
+	album_btn.pressed.connect(func(): album_pressed.emit())
+	add_child(album_btn)
 	# Make sure every button colour is in the style cache now, not the first time it is needed.
 	for c in [COL_LOCKED, COL_OPEN, COL_PLAYED, COL_GOLD]:
 		Ui.button("", 20, Vector2.ZERO, Vector2.ONE, c).free()
@@ -67,6 +72,10 @@ static func node_x(i: int) -> float:
 func refresh() -> void:
 	coins_label.text = "coins %s" % Tuning.fmt(float(Save.coins))
 	stars_label.text = "stars %d/%d" % [Save.total_stars(), Flights.TOTAL * 3]
+	var cards := 0
+	for r in Regions.COUNT:
+		cards += 1 if Save.postcard_of(r) > 0 else 0
+	album_btn.text = "ALBUM %d/%d" % [cards, Regions.COUNT]
 	suggested = Save.suggested_flight()
 	for r in Regions.COUNT:
 		var open := Save.region_unlocked(r)

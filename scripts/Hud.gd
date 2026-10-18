@@ -11,6 +11,8 @@ signal again_pressed
 signal menu_pressed
 signal next_flight_pressed
 signal back_pressed
+signal album_pressed
+signal album_closed
 signal flight_chosen(id: int)
 
 var level_label: Label
@@ -22,6 +24,10 @@ var splash: ColorRect
 var gauge: Control
 var air_label: Label
 var map: MapScreen
+var album: AlbumScreen
+var card_p: Control
+var card_view: PostcardView
+var card_header: Label
 var _air_cache := ""
 var prog: Control
 var prog_labels: Array[Label] = []
@@ -99,12 +105,17 @@ func _ready() -> void:
 	map = MapScreen.new()
 	add_child(map)
 	map.flight_chosen.connect(func(id: int): flight_chosen.emit(id))
+	map.album_pressed.connect(func(): album_pressed.emit())
+	album = AlbumScreen.new()
+	add_child(album)
+	album.back_pressed.connect(func(): album_closed.emit())
 	banner = Ui.label("", 84, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 760), Vector2(1000, 260))
 	banner.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	add_child(banner)
 	_build_menu()
 	_build_dead()
 	_build_result()
+	_build_card()
 	splash = ColorRect.new()
 	splash.color = Color(0.06, 0.1, 0.18, 0.97)
 	splash.size = Vector2(Lanes.W, Lanes.H)
@@ -157,6 +168,18 @@ func _build_menu() -> void:
 	menu_back.pressed.connect(func(): back_pressed.emit())
 	for b in [prev_btn, next_btn, fly_btn, menu_back]:
 		menu_p.add_child(b)
+
+func _build_card() -> void:
+	card_p = _panel()
+	card_header = Ui.label("NEW POSTCARD!", 84, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 220), Vector2(1000, 120))
+	card_p.add_child(card_header)
+	card_view = PostcardView.new()
+	card_view.position = Vector2(30, 400)
+	card_view.size = Vector2(1020, 700)
+	card_p.add_child(card_view)
+	var cont := Ui.button("CONTINUE", 60, Vector2(190, 1250), Vector2(700, 130), Color(0.95, 0.5, 0.15))
+	cont.pressed.connect(func(): card_p.visible = false)
+	card_p.add_child(cont)
 
 func _build_dead() -> void:
 	dead_p = _panel()
@@ -227,6 +250,16 @@ func _draw_prog() -> void:
 
 # ---- in-flight HUD ----
 
+## Show or hide the in-flight readouts (flight name, score, gauge, star progress): only while flying.
+func set_flight_hud(on: bool) -> void:
+	for n in [level_label, score_label, coins_label, gauge, prog]:
+		n.visible = on
+	if not on:
+		air_label.visible = false
+	elif _air_cache != "":
+		air_label.visible = true
+
+
 func set_flight_title(text: String) -> void:
 	level_label.text = text
 
@@ -282,6 +315,8 @@ func tick(dt: float) -> void:
 func hide_overlays() -> void:
 	banner.visible = false
 	map.visible = false
+	album.visible = false
+	card_p.visible = false
 	menu_p.visible = false
 	dead_p.visible = false
 	result_p.visible = false
@@ -307,6 +342,17 @@ func show_map() -> void:
 	map.refresh()
 	map.visible = true
 
+func show_album() -> void:
+	hide_overlays()
+	album.refresh()
+	album.visible = true
+
+## The award screen: over the result screen. state 1 = postcard, 2 = gold.
+func show_postcard(region: int, state: int) -> void:
+	card_view.set_card(region, state)
+	card_header.text = "GOLD POSTCARD!" if state == 2 else "NEW POSTCARD!"
+	card_p.visible = true
+
 func show_dead(text: String) -> void:
 	hide_overlays()
 	dead_text.text = text
@@ -330,6 +376,12 @@ func begin_prewarm() -> void:
 	hide_overlays()
 	map.refresh()
 	map.visible = true
+	album.refresh()
+	album.visible = true
+	album.zoom_p.visible = true
+	album.zoom_view.set_card(1, 2)
+	card_view.set_card(2, 2)
+	card_p.visible = true
 	menu_p.visible = true
 	dead_p.visible = true
 	result_p.visible = true
@@ -350,11 +402,13 @@ func begin_prewarm() -> void:
 	set_flight_coins(88)
 	set_fuel(0.2)
 	set_progress(2, 5, 12.0, 4, 9)
+	set_flight_hud(true)
 	splash.visible = true
 
 func end_prewarm() -> void:
 	splash.visible = false
 	hide_overlays()
+	set_flight_hud(false)
 	prog_lit = [false, false, false]
 	prog.queue_redraw()
 
