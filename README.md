@@ -50,11 +50,31 @@ No SDK yet: a fake "Ad playing" screen stands in (`Ads.gd`, `Hud.show_ad`). All 
 - **Interstitial:** only between Flights (from the result / failed screens, never during play), once every 3 Flights and not before the 3rd Flight.
 - The world stands still while an ad is up. `ads_enabled` switches everything off.
 
+## Performance
+
+Everything that repeats is pooled in fixed arrays, built once and drawn during the start-up pre-warm. The sky is drawn with almost no per-shape draw calls (`LaneRender.gd`):
+
+- The backdrop (layer bands, scenery, goal strip, cables) is drawn **once per leg**; the balloon body is redrawn only when its cosmetics change; the burner flame is its own tiny node; sparks redraw only while alive.
+- Wind streaks, chevrons and streamers are three **MultiMeshes moved entirely by `shaders/wind.gdshader`**: per frame the script only passes each layer's scroll and direction (two small arrays).
+- Hazards, propane tanks and coins are **merged meshes with their outlines included** (`ShapeMesh` / `HazardMeshes`), one MultiMesh per kind; wing flap, kite tails and rotor flicker run in `shaders/hazard.gdshader`. Per frame only each instance's position is written into a pre-allocated buffer.
+- Sand haze is **one shader quad** over all layers (`haze.gdshader`), thermals one quad plus one MultiMesh.
+- **Hard caps:** 4 hazards per layer, 8 wind streaks / 4 chevrons / 1 streamer per layer, 24 sparks. Hazard density and wind speed are capped at moderate values.
+
+`tests/perf_profile.gd` (run under xvfb with a software GL context) flies the worst leg of each region and reports script time per frame and the renderer's draw calls; the before / after numbers for the dense regions are in `tests/perf_baseline_before.txt` and `tests/perf_baseline_after.txt`:
+
+| | before | after |
+| --- | --- | --- |
+| script time in `Lanes._draw` per frame | 5.6 - 6.4 ms | 0.15 - 0.19 ms (`LaneRender.update`) |
+| draw calls per frame | 540 - 614 | 62 - 70 |
+| objects per frame | ~1,000 - 1,280 | ~250 - 290 |
+
+`?perf` shows a rolling frame-time graph (last 120 frames, 16.7 ms and 33 ms lines, frames over 33 ms marked red), the worst frame of the last 3 s, script time per frame in the simulation and in the render update, and how many frames went over 33 ms.
+
 ## Debug flags (URL query)
 
 | Flag | Effect |
 | --- | --- |
-| `?perf` | worst-frame-time readout, hitch log, sim-vs-wall clock |
+| `?perf` | rolling frame-time graph, worst-frame readout, script time per frame, hitch log, sim-vs-wall clock |
 | `?tune` | TUNE button (top-right): live sliders for buoyancy, burner, winds, hazard density, propane...; **Copy values** puts the changed values on the clipboard |
 | `?level=N` | start at level N |
 | `?god` | hazards cannot hurt |

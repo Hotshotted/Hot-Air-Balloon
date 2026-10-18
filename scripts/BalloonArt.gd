@@ -167,8 +167,9 @@ func _fill(ci: CanvasItem, pair: Array, fill: Color, w: float) -> void:
 	ci.draw_colored_polygon(pair[0], fill)
 	ci.draw_polyline(pair[1], Color.BLACK, w)
 
-## Draw the balloon. env / basket / pas: catalogue indices; heat: 0..1 burner heat; t: time for the flame flicker.
-func draw(ci: CanvasItem, env: int, basket: int, pas: int, heat: float, t: float, w: float) -> void:
+## Draw the balloon WITHOUT its flame (env / basket / pas: catalogue indices). The game balloon draws this only when
+## its cosmetics change; the flame is a separate, tiny node.
+func draw_body(ci: CanvasItem, env: int, basket: int, pas: int, w: float) -> void:
 	var c1: Color = Cosmetics.ENV_C1[env]
 	var c2: Color = Cosmetics.ENV_C2[env]
 	var c3: Color = Cosmetics.ENV_C3[env]
@@ -220,6 +221,16 @@ func draw(ci: CanvasItem, env: int, basket: int, pas: int, heat: float, t: float
 	ci.draw_line(Vector2(16, 44), Vector2(12, 60), Color.BLACK, w)
 	ci.draw_rect(Rect2(-4, 52, 8, 6), Color(0.45, 0.47, 0.52))
 	ci.draw_rect(Rect2(-4, 52, 8, 6), Color.BLACK, false, w * 0.6)
+	if pas > 0:   # the passenger peeks over the rim, behind the basket's front
+		_passenger(ci, pas, w)
+	for part in _baskets[basket]:
+		ci.draw_colored_polygon(part[0], part[2])
+		ci.draw_polyline(part[1], Color.BLACK, w)
+	_basket_detail(ci, basket, w)
+
+
+## The burner flame alone (heat 0..1, t for the flicker). Cheap: two triangles.
+func draw_flame(ci: CanvasItem, heat: float, t: float) -> void:
 	if heat > 0.04:
 		var f := 0.85 + 0.15 * sin(t * 45.0)
 		var flame_len := (6.0 + 24.0 * heat) * f
@@ -231,12 +242,11 @@ func draw(ci: CanvasItem, env: int, basket: int, pas: int, heat: float, t: float
 		_flame_in[1] = Vector2(2.5, 52)
 		_flame_in[2] = Vector2(0, 52.0 - flame_len * 0.55)
 		ci.draw_colored_polygon(_flame_in, Color(1.0, 0.92, 0.35))
-	if pas > 0:   # the passenger peeks over the rim, behind the basket's front
-		_passenger(ci, pas, w)
-	for part in _baskets[basket]:
-		ci.draw_colored_polygon(part[0], part[2])
-		ci.draw_polyline(part[1], Color.BLACK, w)
-	_basket_detail(ci, basket, w)
+
+## The whole balloon: body and flame (the map marker, the shop).
+func draw(ci: CanvasItem, env: int, basket: int, pas: int, heat: float, t: float, w: float) -> void:
+	draw_body(ci, env, basket, pas, w)
+	draw_flame(ci, heat, t)
 
 func _basket_detail(ci: CanvasItem, basket: int, w: float) -> void:
 	match basket:

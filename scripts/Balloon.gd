@@ -18,11 +18,17 @@ var on_ground := true
 var sway := 0.0
 var _t := 0.0
 
+var flame: Node2D       # the burner flame: its own tiny node, redrawn only while it burns
+var _flame_on := false
+var body_draws := 0     # times the body has been drawn (only on a cosmetics change or a fresh leg)
 var env_id := 0        # equipped cosmetics (purely visual)
 var basket_id := 0
 var pass_id := 0
 
 func _ready() -> void:
+	flame = BalloonFlame.new()
+	flame.balloon = self
+	add_child(flame)
 	reset()
 
 func s() -> float:
@@ -46,7 +52,8 @@ func reset() -> void:
 	position = Vector2(Lanes.W * 0.5, floor_y())
 	rotation = 0.0
 	scale = Vector2(s(), s())
-	queue_redraw()
+	queue_redraw()   # the body: only now (a cosmetics change or a fresh leg)
+	flame.queue_redraw()
 
 ## Advance by dt. `hold`: the player is holding; `fuel_left`: the tank is not empty; `wind`: the wind of this layer.
 ## `lift`: extra rise from a thermal (px/s); `climb_mult`: share of the climb speed the burner keeps (thin air).
@@ -81,7 +88,10 @@ func step(dt: float, hold: bool, fuel_left: bool, wind: float, lift: float = 0.0
 	sway += (clampf(vx / 300.0, -1.0, 1.0) * 0.2 - sway) * (1.0 - exp(-4.0 * dt))
 	rotation = sway
 	scale = Vector2(s(), s())
-	queue_redraw()
+	var on := heat > 0.04
+	if on or _flame_on:   # (the node's own transform moves the whole balloon: no redraw needed)
+		flame.queue_redraw()
+	_flame_on = on
 
 ## Centre of hit circle i, and its radius (scaled and made forgiving).
 func hit_pos(i: int) -> Vector2:
@@ -91,4 +101,9 @@ func hit_radius(i: int) -> float:
 	return HIT[i][1] * s() * Tuning.hit_forgiveness
 
 func _draw() -> void:
-	BalloonArt.shared().draw(self, env_id, basket_id, pass_id, heat, _t, 4.0 / s())
+	body_draws += 1
+	BalloonArt.shared().draw_body(self, env_id, basket_id, pass_id, 4.0 / s())
+
+## The time the flame flickers with.
+func flicker_time() -> float:
+	return _t

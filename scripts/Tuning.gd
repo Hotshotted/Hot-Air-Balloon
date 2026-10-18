@@ -33,11 +33,12 @@ var hit_forgiveness := 0.85
 ## Layers in level 1, one more per level, never more than layers_max (the sky is a fixed height).
 var layers_base := 5.0
 var layers_max := 9.0
+## Moderate on purpose: difficulty past these caps comes from variety (goal types, rhythm hazards, tools), not from more or faster.
 ## Wind speed (px/s) of a layer: wind_base + wind_per_level * (level - 1) + up to wind_variation, capped at wind_max.
-var wind_base := 80.0
-var wind_per_level := 16.0
-var wind_variation := 50.0
-var wind_max := 280.0
+var wind_base := 70.0
+var wind_per_level := 10.0
+var wind_variation := 35.0
+var wind_max := 170.0
 ## Chance that a layer in the middle has no hazards at all (a rest layer). Falls by 4 points a level.
 var empty_lane_chance := 0.25
 
@@ -56,14 +57,14 @@ var haze_per_lane := 0.38
 var haze_max := 0.9
 ## Himalayas: the burner loses up to thin_air_loss of its climb speed at the top; the top layer is a jet stream (px/s).
 var thin_air_loss := 0.45
-var jet_wind := 380.0
+var jet_wind := 250.0
 
 # ---------- Hazards ----------
 ## Hazards per hazard layer: hazard_density at level 1, plus density_per_level each level, capped at density_max.
 ## (A layer never holds more than fit with the gaps below, so every layer can be crossed.)
-var hazard_density := 2.4
-var density_per_level := 0.35
-var density_max := 6.0
+var hazard_density := 2.2
+var density_per_level := 0.25
+var density_max := 3.2
 ## The smallest gap between two hazards in a layer, in balloon widths. Below ~1.4 it is not passable.
 var min_gap_factor := 1.8
 ## Hazard size multiplier.

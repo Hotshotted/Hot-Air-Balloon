@@ -88,6 +88,15 @@ var _perf_window_start := 0
 var _perf_shown := 0.0
 var _perf_extra := ""
 var _hitch_log: Array[String] = []
+var _graph: Control                    # ?perf: rolling frame-time graph
+var _ft := PackedFloat32Array()        # the last GRAPH_N frame times (ms), as a ring
+var _ft_i := 0
+var _gpts := PackedVector2Array()
+var _over33 := 0                       # frames over 33 ms in the last window
+var _frames_win := 0
+var _prof_text := ""
+const GRAPH_N := 120
+const GRAPH_MAX_MS := 50.0
 
 func _ready() -> void:
 	layer = 5
@@ -157,6 +166,15 @@ func _ready() -> void:
 		_perf_label = Ui.label("", 26, HORIZONTAL_ALIGNMENT_LEFT, Vector2(14, 262), Vector2(900, 400))
 		_perf_label.modulate = Color(0.6, 1, 0.6, 0.95)
 		add_child(_perf_label)
+		_ft.resize(GRAPH_N)
+		_gpts.resize(GRAPH_N)
+		_graph = Control.new()
+		_graph.position = Vector2(14, 1620)
+		_graph.size = Vector2(GRAPH_N * 5.0, 150)
+		_graph.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_graph.draw.connect(_draw_graph)
+		add_child(_graph)
+		Lanes.prof_on = true
 	hide_overlays()
 
 func _panel() -> Control:
@@ -526,13 +544,41 @@ func note_hitch(raw: float, used: float, why: String, context: String) -> void:
 	if _hitch_log.size() > 5:
 		_hitch_log.pop_front()
 
+## The rolling frame-time graph: one polyline of the last 120 frames (0-50 ms), with the 16.7 ms (60 fps) and
+## 33 ms (30 fps, the target's limit) lines; frames over 33 ms are marked red.
+func _draw_graph() -> void:
+	var h := _graph.size.y
+	var wpx := float(GRAPH_N) * 5.0
+	_graph.draw_rect(Rect2(0, 0, wpx, h), Color(0, 0, 0, 0.55))
+	for lim in [16.7, 33.0]:
+		var y := h - h * float(lim) / GRAPH_MAX_MS
+		_graph.draw_line(Vector2(0, y), Vector2(wpx, y), Color(1, 1, 0.4, 0.7) if lim < 20.0 else Color(1, 0.4, 0.3, 0.8), 2.0)
+	for i in GRAPH_N:
+		var ms := _ft[(_ft_i + i) % GRAPH_N]
+		_gpts[i] = Vector2(float(i) * 5.0, h - h * minf(ms, GRAPH_MAX_MS) / GRAPH_MAX_MS)
+		if ms > 33.0:
+			_graph.draw_line(Vector2(float(i) * 5.0, h), Vector2(float(i) * 5.0, 0.0), Color(1, 0.2, 0.2, 0.85), 4.0)
+	_graph.draw_polyline(_gpts, Color(0.5, 1.0, 0.6), 2.0)
+	_graph.draw_rect(Rect2(0, 0, wpx, h), Color.WHITE, false, 2.0)
+
 func update_perf(delta: float) -> void:
 	if _perf_label == null:
 		return
+	_ft[_ft_i] = delta * 1000.0
+	_ft_i = (_ft_i + 1) % GRAPH_N
+	_frames_win += 1
+	if delta > 0.033:
+		_over33 += 1
+	_graph.queue_redraw()
 	_perf_worst = maxf(_perf_worst, delta * 1000.0)
 	var now := Time.get_ticks_msec()
 	if now - _perf_window_start > 3000:
 		_perf_shown = _perf_worst
 		_perf_worst = 0.0
 		_perf_window_start = now
-	_perf_label.text = "worst frame (3s): %.0f ms   %d fps\n%s\nhitches (over 50 ms):\n%s" % [_perf_shown, Engine.get_frames_per_second(), _perf_extra, "\n".join(_hitch_log)]
+		var n := maxf(float(_frames_win), 1.0)
+		_prof_text = "script/frame: sim %.0f us, render %.0f us | over 33 ms: %d of %d frames" % [Lanes.prof_us[0] / n, Lanes.prof_us[1] / n, _over33, _frames_win]
+		Lanes.prof_us.fill(0.0)
+		_frames_win = 0
+		_over33 = 0
+	_perf_label.text = "worst frame (3s): %.0f ms   %d fps\n%s\n%s\nhitches (over 50 ms):\n%s" % [_perf_shown, Engine.get_frames_per_second(), _prof_text, _perf_extra, "\n".join(_hitch_log)]

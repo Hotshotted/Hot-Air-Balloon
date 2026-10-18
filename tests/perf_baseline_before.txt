@@ -1,0 +1,60 @@
+Godot Engine v4.5.stable.official.876b29033 - https://godotengine.org
+OpenGL API 4.5 (Core Profile) Mesa 25.2.8-0ubuntu0.24.04.4 - Compatibility - Using Device: Mesa - llvmpipe (LLVM 20.1.2, 256 bits)
+
+renderer: opengl3  (llvmpipe (LLVM 20.1.2, 256 bits))
+
+== 0, Flight 6 leg 5: 5 layers, 25 hazards ==
+  script: sim 88 us/frame (worst 299), _draw 100 us/frame
+    sky bands                       1 us
+    scenery                        12 us
+    wind particles/streamers       19 us
+    thermals                        0 us
+    cables                          0 us
+    tanks+coins                    14 us
+    hazards                        53 us
+    haze                            0 us
+    goal strip                      1 us
+    sparks                          1 us
+  renderer: 187 draw calls, 724 objects per frame; process time avg 74.4 ms, worst 233.7 ms
+
+== 1, Flight 12 leg 5: 9 layers, 32 hazards ==
+  script: sim 257 us/frame (worst 429), _draw 5569 us/frame
+    sky bands                      42 us
+    scenery                       629 us
+    wind particles/streamers      915 us
+    thermals                        3 us
+    cables                         11 us
+    tanks+coins                   350 us
+    hazards                      3501 us
+    haze                            4 us
+    goal strip                     57 us
+    sparks                         56 us
+  renderer: 542 draw calls, 993 objects per frame; process time avg 31.7 ms, worst 36.7 ms
+
+== 2, Flight 18 leg 5: 9 layers, 41 hazards ==
+  script: sim 255 us/frame (worst 771), _draw 6412 us/frame
+    sky bands                      41 us
+    scenery                       668 us
+    wind particles/streamers      923 us
+    thermals                      263 us
+    cables                          4 us
+    tanks+coins                   358 us
+    hazards                      4052 us
+    haze                           35 us
+    goal strip                     53 us
+    sparks                         16 us
+  renderer: 600 draw calls, 1188 objects per frame; process time avg 38.2 ms, worst 43.6 ms
+
+== 3, Flight 24 leg 5: 9 layers, 48 hazards ==
+  script: sim 250 us/frame (worst 894), _draw 6102 us/frame
+    sky bands                      38 us
+    scenery                       609 us
+    wind particles/streamers      859 us
+    thermals                        3 us
+    cables                          3 us
+    tanks+coins                   339 us
+    hazards                      4141 us
+    haze                            4 us
+    goal strip                     50 us
+    sparks                         57 us
+  renderer: 614 draw calls, 1279 objects per frame; process time avg 39.2 ms, worst 41.9 ms

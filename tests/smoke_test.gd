@@ -1223,6 +1223,82 @@ func _run() -> void:
 	sv.reset_all()
 	m._show_map()
 
+	# ---- 6h. performance structure ----
+	print("6h. performance structure")
+	var LRS = load("res://scripts/LaneRender.gd")
+	# Hard caps on everything that scales with the level, across every Flight of the world.
+	var over_cap := 0
+	var max_haz := 0
+	var max_total := 0
+	for fid in 24:
+		var rr2: int = FlightsS.region_of(fid)
+		for l in 5:
+			m.lanes.setup(FlightsS.eff_level(rr2, FlightsS.index_of(fid), l), false, FlightsS.leg_seed(FlightsS.seed_of(fid), l), rr2)
+			var sky_total := 0
+			for i in m.lanes.n_lanes:
+				max_haz = maxi(max_haz, m.lanes.lane_count[i])
+				sky_total += m.lanes.lane_count[i]
+				if m.lanes.lane_count[i] > LanesS.MAX_PER_LANE:
+					over_cap += 1
+			max_total = maxi(max_total, sky_total)
+			var rd = m.lanes.render
+			if rd._streaks.multimesh.visible_instance_count > m.lanes.n_lanes * LanesS.PARTS_PER_LANE or rd._streamers.multimesh.visible_instance_count > m.lanes.n_lanes * LanesS.STREAMERS_PER_LANE or rd._chevs.multimesh.visible_instance_count > m.lanes.n_lanes * LanesS.CHEVRONS_PER_LANE:
+				over_cap += 1
+	check(over_cap == 0 and max_haz <= 4 and max_total <= LanesS.MAX_HAZ, "hard caps hold in every Flight: at most %d hazards per layer, %d in the sky (cap %d)" % [max_haz, max_total, LanesS.MAX_HAZ])
+	check(LanesS.PARTS_PER_LANE <= 8 and LanesS.STREAMERS_PER_LANE <= 1 and LanesS.CHEVRONS_PER_LANE <= 4 and LanesS.FX_MAX <= 24, "wind streaks (8), chevrons (4), streamers (1) per layer and sparks (24) are capped")
+	check(tn.density_max <= 3.5 and tn.wind_max <= 180.0 and tn.jet_wind <= 260.0, "density and wind speed are capped at moderate values")
+	# The MultiMesh buffers mirror the simulation.
+	m.lanes.setup(FlightsS.eff_level(1, 5, 4), false, 4242, 1)
+	m.lanes.update(1.0 / 60.0)
+	var rnd = m.lanes.render
+	var mirrored := true
+	var hz_total := 0
+	for i in m.lanes.n_lanes:
+		for j in m.lanes.lane_count[i]:
+			var hidx: int = i * LanesS.MAX_PER_LANE + j
+			var buf: PackedFloat32Array = rnd._hz_buf[rnd._hz_mesh[hidx]]
+			var bb: int = rnd._hz_slot[hidx] * LRS.HZ_STRIDE
+			mirrored = mirrored and is_equal_approx(buf[bb + 3], m.lanes.hz_x[hidx]) and is_equal_approx(buf[bb + 7], m.lanes.hz_y[hidx])
+			hz_total += 1
+	var inst := 0
+	for mi in 11:
+		inst += rnd._hz_n[mi]
+	check(mirrored and inst == hz_total, "every hazard has exactly one MultiMesh instance, positioned where the simulation says (%d)" % hz_total)
+	var kinds_used := {}
+	for mi in 11:
+		if rnd._hz_n[mi] > 0:
+			kinds_used[mi] = true
+	check(kinds_used.size() <= 4, "a leg draws with at most four hazard meshes (one MultiMesh each)")
+	# Static things are drawn once per leg, not per frame; the balloon body only when it changes; sparks only while alive.
+	m.start_flight(0)
+	clear_sky(m)
+	m.set_process(true)
+	await real_wait(0.3)
+	m.set_process(false)
+	var bd_draws: int = m.lanes.render.backdrop.draws
+	var body_draws: int = m.balloon.body_draws
+	var fx_draws: int = m.lanes.render.fx.draws
+	m.set_process(true)
+	m.burn_override = 1
+	await real_wait(1.0)
+	m.set_process(false)
+	m.burn_override = 0
+	check(m.lanes.render.backdrop.draws == bd_draws and m.balloon.body_draws == body_draws and m.lanes.render.fx.draws == fx_draws, "no per-frame redraw of the backdrop, the balloon body or the sparks while flying")
+	m.lanes.burst(Vector2(500, 900), Color.RED, 8, 200.0)
+	m.lanes.update(1.0 / 60.0)
+	m.set_process(true)
+	await real_wait(0.2)
+	m.set_process(false)
+	check(m.lanes.render.fx.draws > fx_draws, "...but sparks do draw while some are alive")
+	m.lanes.clear_fx()
+	m.start_flight(0)
+	var bd2: int = m.lanes.render.backdrop.draws
+	m.start_flight(0)
+	await process_frame
+	await process_frame
+	check(m.lanes.render.backdrop.draws > bd2 - 1, "the backdrop is redrawn when a leg starts")
+	m.set_process(false)
+
 	# ---- 7. fairness ----
 	print("7. generated levels")
 	var bal_w: float = BalloonS.WIDTH * tn.balloon_scale
