@@ -68,11 +68,12 @@ func reset() -> void:
 	queue_redraw()
 
 ## Advance by dt. `hold`: the player is holding; `fuel_left`: the tank is not empty; `wind`: the wind of this layer.
-func step(dt: float, hold: bool, fuel_left: bool, wind: float) -> void:
+## `lift`: extra rise from a thermal (px/s); `climb_mult`: share of the climb speed the burner keeps (thin air).
+func step(dt: float, hold: bool, fuel_left: bool, wind: float, lift: float = 0.0, climb_mult: float = 1.0) -> void:
 	_t += dt
 	burning = hold and fuel_left
 	heat = move_toward(heat, 1.0 if burning else 0.0, (Tuning.heat_rate if burning else Tuning.cool_rate) * dt)
-	var target := lerpf(-Tuning.sink_speed, Tuning.climb_speed, heat)
+	var target := lerpf(-Tuning.sink_speed, Tuning.climb_speed * climb_mult, heat) + lift
 	rise += (target - rise) * (1.0 - exp(-Tuning.buoyancy_lag * dt))
 	var y := position.y - rise * dt
 	var fy := floor_y()

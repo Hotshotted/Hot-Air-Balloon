@@ -11,6 +11,19 @@ A Frogger-style hot air balloon game (working title). Side view, low-poly shapes
 - **Stars per Flight:** 1 for finishing, 1 for finishing with enough propane left (the gold tick on the gauge), 1 for collecting enough of the floating gold coins. Progress toward each is shown under the gauge.
 - **Coins** (currency): per leg cleared, per floating coin collected, and a bonus for leftover propane at the end. Score = legs x 100 + a speed bonus for every second under par.
 
+## The world
+
+A map of 4 regions with 6 Flights each. A Flight opens when the one before it is completed; the next region opens at 12 of 18 stars in the current one. The map shows the stars earned per Flight, so replaying for 3 stars is obvious.
+
+| Region | Palette | Hazards | Mechanics |
+| --- | --- | --- | --- |
+| Countryside | green hills | birds, kites, balloons, drones | gentle winds |
+| Alps | icy blue, snow peaks | eagles, cable cars (+ birds, kites) | gusty layers: each layer's wind swells and fades over time |
+| Sahara | sand and sunset | vultures, flying carpets (+ balloons, drones) | thermals (columns of strong updraft) and sand haze that hides distant layers |
+| Himalayas | dusk purple, dark peaks | eagles, paragliders (+ birds, drones) | thin air (the burner weakens with altitude) and a fast jet-stream top layer |
+
+Difficulty rises across the 6 Flights of a region (more hazard kinds, denser layers, faster winds) and from region to region.
+
 ## Debug flags (URL query)
 
 | Flag | Effect |

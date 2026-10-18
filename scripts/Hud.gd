@@ -10,6 +10,8 @@ signal next_pressed
 signal again_pressed
 signal menu_pressed
 signal next_flight_pressed
+signal back_pressed
+signal flight_chosen(id: int)
 
 var level_label: Label
 var score_label: Label
@@ -18,6 +20,9 @@ var stamp_label: Label
 var banner: Label
 var splash: ColorRect
 var gauge: Control
+var air_label: Label
+var map: MapScreen
+var _air_cache := ""
 var prog: Control
 var prog_labels: Array[Label] = []
 var fuel_frac := 1.0
@@ -28,6 +33,8 @@ var _prog_cache := ["", "", ""]
 var menu_p: Control
 var menu_title: Label
 var menu_name: Label
+var menu_blurb: Label
+var menu_back: Button
 var menu_info: Label
 var menu_stars: Control
 var menu_lit := [false, false, false]
@@ -85,6 +92,13 @@ func _ready() -> void:
 		var l := Ui.label("", 28, HORIZONTAL_ALIGNMENT_LEFT, Vector2(36.0 + 345.0 * float(i), 6), Vector2(300, 40))
 		prog.add_child(l)
 		prog_labels.append(l)
+	air_label = Ui.label("", 26, HORIZONTAL_ALIGNMENT_LEFT, Vector2(30, 218), Vector2(700, 36))
+	air_label.add_theme_color_override("font_color", Color(0.75, 0.85, 1.0))
+	air_label.visible = false
+	add_child(air_label)
+	map = MapScreen.new()
+	add_child(map)
+	map.flight_chosen.connect(func(id: int): flight_chosen.emit(id))
 	banner = Ui.label("", 84, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 760), Vector2(1000, 260))
 	banner.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	add_child(banner)
@@ -99,7 +113,7 @@ func _ready() -> void:
 	add_child(splash)
 	splash.add_child(Ui.label("WIND LAYERS\nloading...", 64, HORIZONTAL_ALIGNMENT_CENTER, Vector2(0, 780), Vector2(Lanes.W, 300)))
 	if DebugFlags.perf_enabled():
-		_perf_label = Ui.label("", 26, HORIZONTAL_ALIGNMENT_LEFT, Vector2(14, 224), Vector2(900, 400))
+		_perf_label = Ui.label("", 26, HORIZONTAL_ALIGNMENT_LEFT, Vector2(14, 262), Vector2(900, 400))
 		_perf_label.modulate = Color(0.6, 1, 0.6, 0.95)
 		add_child(_perf_label)
 	hide_overlays()
@@ -118,28 +132,30 @@ func _panel() -> Control:
 
 func _build_menu() -> void:
 	menu_p = _panel()
-	menu_title = Ui.label("WIND LAYERS", 120, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 230), Vector2(1000, 160))
+	menu_title = Ui.label("", 110, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 200), Vector2(1000, 150))
 	menu_p.add_child(menu_title)
-	var info := Ui.label("HOLD to fire the burner and rise.\nRELEASE to sink slowly.\nFive legs on one tank of propane. Collect coins, save fuel, earn 3 stars.", 38, HORIZONTAL_ALIGNMENT_CENTER, Vector2(90, 430), Vector2(900, 250))
-	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	menu_p.add_child(info)
-	menu_name = Ui.label("", 70, HORIZONTAL_ALIGNMENT_CENTER, Vector2(200, 720), Vector2(680, 100))
+	menu_blurb = Ui.label("", 40, HORIZONTAL_ALIGNMENT_CENTER, Vector2(90, 350), Vector2(900, 60))
+	menu_p.add_child(menu_blurb)
+	menu_name = Ui.label("", 70, HORIZONTAL_ALIGNMENT_CENTER, Vector2(200, 480), Vector2(680, 100))
 	menu_p.add_child(menu_name)
 	menu_stars = Control.new()
-	menu_stars.position = Vector2(340, 830)
+	menu_stars.position = Vector2(340, 590)
 	menu_stars.size = Vector2(400, 80)
 	menu_stars.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	menu_stars.draw.connect(func(): _draw_three(menu_stars, menu_lit, 40.0, 140.0, 40.0))
 	menu_p.add_child(menu_stars)
-	menu_info = Ui.label("", 36, HORIZONTAL_ALIGNMENT_CENTER, Vector2(140, 930), Vector2(800, 120))
+	menu_info = Ui.label("", 38, HORIZONTAL_ALIGNMENT_CENTER, Vector2(90, 690), Vector2(900, 330))
+	menu_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	menu_p.add_child(menu_info)
-	prev_btn = Ui.button("<", 70, Vector2(70, 710), Vector2(120, 120))
-	next_btn = Ui.button(">", 70, Vector2(890, 710), Vector2(120, 120))
-	fly_btn = Ui.button("FLY", 84, Vector2(190, 1120), Vector2(700, 160), Color(0.95, 0.5, 0.15))
+	prev_btn = Ui.button("<", 70, Vector2(70, 470), Vector2(120, 120))
+	next_btn = Ui.button(">", 70, Vector2(890, 470), Vector2(120, 120))
+	fly_btn = Ui.button("FLY", 84, Vector2(190, 1100), Vector2(700, 160), Color(0.95, 0.5, 0.15))
+	menu_back = Ui.button("MAP", 56, Vector2(190, 1300), Vector2(700, 120))
 	prev_btn.pressed.connect(func(): prev_pressed.emit())
 	next_btn.pressed.connect(func(): next_pressed.emit())
 	fly_btn.pressed.connect(func(): fly_pressed.emit())
-	for b in [prev_btn, next_btn, fly_btn]:
+	menu_back.pressed.connect(func(): back_pressed.emit())
+	for b in [prev_btn, next_btn, fly_btn, menu_back]:
 		menu_p.add_child(b)
 
 func _build_dead() -> void:
@@ -150,7 +166,7 @@ func _build_dead() -> void:
 	dead_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	dead_p.add_child(dead_text)
 	dead_again = Ui.button("FLY AGAIN", 70, Vector2(190, 1000), Vector2(700, 140), Color(0.95, 0.5, 0.15))
-	dead_menu = Ui.button("MENU", 60, Vector2(190, 1180), Vector2(700, 120))
+	dead_menu = Ui.button("MAP", 60, Vector2(190, 1180), Vector2(700, 120))
 	dead_again.pressed.connect(func(): again_pressed.emit())
 	dead_menu.pressed.connect(func(): menu_pressed.emit())
 	dead_p.add_child(dead_again)
@@ -175,7 +191,7 @@ func _build_result() -> void:
 	result_p.add_child(result_summary)
 	result_again = Ui.button("AGAIN", 56, Vector2(90, 1380), Vector2(440, 130))
 	result_next = Ui.button("NEXT", 56, Vector2(550, 1380), Vector2(440, 130), Color(0.95, 0.5, 0.15))
-	result_menu = Ui.button("MENU", 56, Vector2(190, 1540), Vector2(700, 120))
+	result_menu = Ui.button("MAP", 56, Vector2(190, 1540), Vector2(700, 120))
 	result_again.pressed.connect(func(): again_pressed.emit())
 	result_next.pressed.connect(func(): next_flight_pressed.emit())
 	result_menu.pressed.connect(func(): menu_pressed.emit())
@@ -265,13 +281,16 @@ func tick(dt: float) -> void:
 
 func hide_overlays() -> void:
 	banner.visible = false
+	map.visible = false
 	menu_p.visible = false
 	dead_p.visible = false
 	result_p.visible = false
 	_banner_left = 0.0
 
-func show_menu(title: String, lit1: bool, lit2: bool, lit3: bool, info: String, can_prev: bool, can_next: bool, can_fly: bool) -> void:
+func show_menu(region_name: String, blurb: String, title: String, lit1: bool, lit2: bool, lit3: bool, info: String, can_prev: bool, can_next: bool, can_fly: bool) -> void:
 	hide_overlays()
+	menu_title.text = region_name
+	menu_blurb.text = blurb
 	menu_name.text = title
 	menu_lit[0] = lit1
 	menu_lit[1] = lit2
@@ -282,6 +301,11 @@ func show_menu(title: String, lit1: bool, lit2: bool, lit3: bool, info: String, 
 	next_btn.disabled = not can_next
 	fly_btn.disabled = not can_fly
 	menu_p.visible = true
+
+func show_map() -> void:
+	hide_overlays()
+	map.refresh()
+	map.visible = true
 
 func show_dead(text: String) -> void:
 	hide_overlays()
@@ -304,9 +328,13 @@ func show_result(row0: String, row1: String, row2: String, lit1: bool, lit2: boo
 
 func begin_prewarm() -> void:
 	hide_overlays()
+	map.refresh()
+	map.visible = true
 	menu_p.visible = true
 	dead_p.visible = true
 	result_p.visible = true
+	menu_title.text = "Countryside"
+	menu_blurb.text = "gentle winds"
 	menu_name.text = "COUNTRYSIDE 6"
 	menu_info.text = "best 123,456"
 	menu_lit = [true, true, true]
@@ -329,6 +357,13 @@ func end_prewarm() -> void:
 	hide_overlays()
 	prog_lit = [false, false, false]
 	prog.queue_redraw()
+
+## Thin air readout (Himalayas); "" hides it.
+func set_air(text: String) -> void:
+	if text != _air_cache:
+		_air_cache = text
+		air_label.text = text
+		air_label.visible = text != ""
 
 # ---- ?perf ----
 

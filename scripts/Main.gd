@@ -4,7 +4,7 @@ extends Node2D
 ## One scene for the whole session. Restarting is IN PLACE: the pooled hazards, effects and UI nodes
 ## stay alive (and warm); only the game state is reset.
 
-enum { SCREEN_MENU, SCREEN_PLAY, SCREEN_CLEAR, SCREEN_DEAD, SCREEN_RESULT }
+enum { SCREEN_MENU, SCREEN_PLAY, SCREEN_CLEAR, SCREEN_DEAD, SCREEN_RESULT, SCREEN_MAP }
 ## Seconds the "leg cleared" banner holds before the next leg starts.
 const CLEAR_HOLD := 1.3
 
@@ -34,6 +34,7 @@ var hud: Hud
 var sim_time := 0.0                 # seconds of simulation this Flight (should track the wall clock minus pauses)
 var _warming := false
 var _prog_key := -1
+var _air_pct := -1
 static var _warmed := false         # the pre-warm only ever runs once per page load
 
 func _ready() -> void:
@@ -51,11 +52,13 @@ func _ready() -> void:
 	hud.prev_pressed.connect(func(): _select(selected - 1))
 	hud.next_pressed.connect(func(): _select(selected + 1))
 	hud.again_pressed.connect(func(): start_flight(flight_id))
-	hud.menu_pressed.connect(_show_menu)
-	hud.next_flight_pressed.connect(func(): _select(flight_id + 1); start_flight(selected))
+	hud.menu_pressed.connect(_show_map)
+	hud.back_pressed.connect(_show_map)
+	hud.flight_chosen.connect(func(id: int): selected = id; _show_menu())
+	hud.next_flight_pressed.connect(_on_next_flight)
 	selected = Save.suggested_flight()
 	_set_flight(selected)
-	lanes.setup(Flights.eff_level(flight_region, flight_index, 0), false, Flights.leg_seed(flight_seed, 0))
+	lanes.setup(Flights.eff_level(flight_region, flight_index, 0), false, Flights.leg_seed(flight_seed, 0), flight_region)
 	balloon.reset()
 	fuel = Tuning.propane_start
 	hud.set_fuel(1.0)
@@ -64,7 +67,7 @@ func _ready() -> void:
 		if DebugFlags.prewarm_enabled():
 			_prewarm()
 			return
-	_show_menu()
+	_show_map()
 	if tune_panel:
 		tune_panel.set_available(true)
 
@@ -75,32 +78,58 @@ func _set_flight(id: int) -> void:
 	flight_seed = Flights.seed_of(id)
 
 func _flight_name(id: int) -> String:
-	return "FLIGHT %d" % (id + 1)
+	return "%s %d" % [String(Regions.NAMES[Flights.region_of(id)]).to_upper(), Flights.index_of(id) + 1]
 
-# ---- menu ----
+# ---- map and Flight screen ----
 
 func _select(id: int) -> void:
 	selected = clampi(id, 0, Flights.TOTAL - 1)
 	_refresh_menu()
 
-func _show_menu() -> void:
-	screen = SCREEN_MENU
-	balloon.visible = true
-	_set_flight(selected)
-	lanes.setup(Flights.eff_level(flight_region, flight_index, 0), false, Flights.leg_seed(flight_seed, 0))
-	balloon.reset()
+## The world map (the home screen).
+func _show_map() -> void:
+	screen = SCREEN_MAP
+	get_tree().paused = false
+	lanes.visible = false
+	balloon.visible = false
 	hud.set_flight_title("")
 	hud.set_score(0)
 	hud.set_flight_coins(0)
+	hud.set_air("")
+	hud.show_map()
+
+## The Flight screen: name, stars, what each star needs, FLY.
+func _show_menu() -> void:
+	screen = SCREEN_MENU
+	lanes.visible = true
+	balloon.visible = true
+	_set_flight(selected)
+	lanes.setup(Flights.eff_level(flight_region, flight_index, 0), false, Flights.leg_seed(flight_seed, 0), flight_region)
+	balloon.reset()
+	hud.set_flight_title("")
+	hud.set_air("")
 	_refresh_menu()
 
 func _refresh_menu() -> void:
 	if screen != SCREEN_MENU:
 		return
-	var st := Save.stars_of(selected)
-	var open := Save.flight_unlocked(selected)
-	var info := "locked: finish the Flight before it" if not open else "best score %s    coins %s" % [Tuning.fmt(float(Save.best_score_of(selected))), Tuning.fmt(float(Save.coins))]
-	hud.show_menu(_flight_name(selected), st >= 1, st >= 2, st >= 3, info, selected > 0, selected < Flights.PER_REGION - 1, open)
+	var id := selected
+	var st := Save.stars_of(id)
+	var open := Save.flight_unlocked(id)
+	var info := "Locked: complete the Flight before it." if not open else "* Finish all %d legs\n* Finish with %d propane or more\n* Collect %d of %d coins\nbest score %s     coins %s" % [
+		int(Tuning.legs_per_flight), int(Flights.propane_target()), Flights.coin_target(), Flights.coin_total(),
+		Tuning.fmt(float(Save.best_score_of(id))), Tuning.fmt(float(Save.coins))]
+	var r := Flights.region_of(id)
+	hud.show_menu(Regions.NAMES[r], Regions.BLURB[r], "FLIGHT %d" % (Flights.index_of(id) + 1), st >= 1, st >= 2, st >= 3, info,
+		Flights.index_of(id) > 0, Flights.index_of(id) < Flights.PER_REGION - 1, open)
+
+func _on_next_flight() -> void:
+	var nxt := flight_id + 1
+	if nxt < Flights.TOTAL and Flights.region_of(nxt) == Flights.region_of(flight_id) and Save.flight_unlocked(nxt):
+		selected = nxt
+		start_flight(nxt)
+	else:
+		_show_map()
 
 ## First-use stutter fix: GL shaders / buffers / font glyphs set themselves up the first time they are
 ## used. So at boot, behind a splash screen, draw EVERY shape for real (all hazard kinds in both
@@ -110,6 +139,8 @@ func _prewarm() -> void:
 	_warming = true
 	hud.begin_prewarm()
 	lanes.setup(1, true)
+	lanes.visible = true
+	balloon.visible = true
 	if tune_panel:
 		tune_panel.prewarm_show(true)
 	var t_start := Time.get_ticks_msec()
@@ -136,12 +167,13 @@ func _prewarm() -> void:
 			break
 	lanes.clear_fx()
 	balloon.heat = 0.0
+	lanes.setup(Flights.eff_level(0, 0, 0), false, Flights.leg_seed(Flights.seed_of(0), 0), 0)
 	hud.end_prewarm()
 	if tune_panel:
 		tune_panel.prewarm_show(false)
 		tune_panel.set_available(true)
 	_warming = false
-	_show_menu()
+	_show_map()
 
 # ---------------------------------------------------------------------------------------------------------
 # Flight flow
@@ -167,7 +199,8 @@ func start_flight(id: int) -> void:
 	_begin_leg()
 
 func _begin_leg() -> void:
-	lanes.setup(Flights.eff_level(flight_region, flight_index, leg), false, Flights.leg_seed(flight_seed, leg))
+	lanes.setup(Flights.eff_level(flight_region, flight_index, leg), false, Flights.leg_seed(flight_seed, leg), flight_region)
+	lanes.visible = true
 	lanes.clear_fx()
 	balloon.reset()
 	balloon.visible = true
@@ -176,6 +209,7 @@ func _begin_leg() -> void:
 	hud.hide_overlays()
 	hud.set_flight_title("%s   LEG %d/%d" % [_flight_name(flight_id), leg + 1, int(Tuning.legs_per_flight)])
 	hud.set_fuel(fuel / Tuning.propane_start)
+	_air_pct = -1
 	_prog_key = -1
 	_update_progress()
 	hud.show_banner("LEG %d / %d" % [leg + 1, int(Tuning.legs_per_flight)], 1.0)
@@ -234,7 +268,13 @@ func _finish_flight() -> void:
 		"Propane left %d  (needs %d)" % [int(fuel), tgt_p],
 		"Coins collected %d  (needs %d)" % [coins_picked, Flights.coin_target()],
 		true, last_stars >= 2 and fuel >= Flights.propane_target(), coins_picked >= Flights.coin_target(),
-		summary + ("\nNEW BEST: %d stars" % last_stars if last_stars > had else ""), flight_id + 1 < Flights.TOTAL and Save.flight_unlocked(flight_id + 1))
+		summary + ("\nNEW BEST: %d stars" % last_stars if last_stars > had else "") + _region_news(),
+		flight_id + 1 < Flights.TOTAL and Flights.region_of(flight_id + 1) == flight_region and Save.flight_unlocked(flight_id + 1))
+
+## "NEW REGION UNLOCKED" for the result screen, once per region.
+func _region_news() -> String:
+	var r := Save.take_new_region()
+	return "\nNEW REGION UNLOCKED: %s!" % Regions.NAMES[r] if r >= 0 else ""
 
 func _holding() -> bool:
 	if burn_override >= 0:
@@ -261,7 +301,14 @@ func sim(dt: float) -> void:
 			lanes.update(dt)
 
 func _play(dt: float) -> void:
-	balloon.step(dt, _holding(), fuel > 0.0, lanes.wind_at(balloon.position.y))
+	lanes.focus_lane = lanes.lane_of(balloon.position.y)
+	var climb_mult := lanes.climb_mult_at(balloon.position.y)
+	balloon.step(dt, _holding(), fuel > 0.0, lanes.wind_at(balloon.position.y), lanes.thermal_lift(balloon.position.x), climb_mult)
+	if lanes.thin_air:
+		var pct := int(climb_mult * 100.0)
+		if pct != _air_pct:
+			_air_pct = pct
+			hud.set_air("thin air: burner at %d%%" % pct)
 	if not leg_started and not balloon.on_ground:
 		leg_started = true
 	if leg_started:

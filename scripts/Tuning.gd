@@ -41,6 +41,23 @@ var wind_max := 280.0
 ## Chance that a layer in the middle has no hazards at all (a rest layer). Falls by 4 points a level.
 var empty_lane_chance := 0.25
 
+# ---------- Regions ----------
+## Countryside winds are this much of the base speed (gentle).
+var countryside_wind_mult := 0.8
+## Alps: a layer's wind swells and fades by +-gust_amp around its steady speed, once per 2*pi/gust_rate seconds.
+var gust_amp := 0.55
+var gust_rate := 0.5
+## Sahara: thermals are columns (half width thermal_width px) that add up to thermal_lift px/s of rise.
+## Sand haze: layers more than haze_clear_lanes away from the balloon fade, haze_per_lane alpha per layer, up to haze_max.
+var thermal_width := 95.0
+var thermal_lift := 210.0
+var haze_clear_lanes := 1.0
+var haze_per_lane := 0.38
+var haze_max := 0.9
+## Himalayas: the burner loses up to thin_air_loss of its climb speed at the top; the top layer is a jet stream (px/s).
+var thin_air_loss := 0.45
+var jet_wind := 380.0
+
 # ---------- Hazards ----------
 ## Hazards per hazard layer: hazard_density at level 1, plus density_per_level each level, capped at density_max.
 ## (A layer never holds more than fit with the gaps below, so every layer can be crossed.)

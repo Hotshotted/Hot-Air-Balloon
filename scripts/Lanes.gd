@@ -22,16 +22,18 @@ const STREAMERS_PER_LANE := 2
 const STREAM_PTS := 7
 const FX_MAX := 48
 const MAX_COINS := MAX_LANES
+const MAX_THERMALS := 3
+const THERMAL_PARTS := 10
 
-enum { BIRD, KITE, BALLOON, DRONE }
-const KIND_NAME := ["a bird", "a kite", "another balloon", "a drone"]
+enum { BIRD, KITE, BALLOON, DRONE, EAGLE, CABLE, CARPET, GLIDER }
+const KIND_NAME := ["a bird", "a kite", "another balloon", "a drone", "an eagle", "a cable car", "a flying carpet", "a paraglider"]
 ## Hit ellipse half sizes, speed relative to the wind of the layer, how much of the free layer height the
 ## hazard bobs through, and bob rate.
-const KIND_HX := [34.0, 30.0, 48.0, 50.0]
-const KIND_HY := [22.0, 44.0, 60.0, 20.0]
-const KIND_SPEED := [1.55, 0.75, 0.45, 2.1]
-const KIND_BOB := [0.35, 1.0, 0.5, 0.6]
-const KIND_RATE := [2.2, 1.5, 0.8, 2.6]
+const KIND_HX := [34.0, 30.0, 48.0, 50.0, 46.0, 36.0, 52.0, 56.0]
+const KIND_HY := [22.0, 44.0, 60.0, 20.0, 28.0, 34.0, 16.0, 38.0]
+const KIND_SPEED := [1.55, 0.75, 0.45, 2.1, 1.8, 0.6, 1.3, 0.9]
+const KIND_BOB := [0.35, 1.0, 0.5, 0.6, 0.3, 0.0, 0.8, 0.7]
+const KIND_RATE := [2.2, 1.5, 0.8, 2.6, 2.0, 1.0, 1.8, 1.0]
 
 const C_BIRD := Color(0.88, 0.27, 0.23)
 const C_BIRD_WING := Color(0.7, 0.16, 0.2)
@@ -46,7 +48,9 @@ const FX_BLACK := Color(0, 0, 0, 1)
 # ---- Level state ----
 var n_lanes := 5
 var lane_h := 0.0
-var lane_wind := PackedFloat32Array()    # px/s, sign = direction
+var lane_wind := PackedFloat32Array()    # px/s right now, sign = direction (gusts make it change)
+var lane_base := PackedFloat32Array()    # the layer's steady wind
+var lane_gph := PackedFloat32Array()     # gust phase
 var lane_vel := PackedFloat32Array()     # px/s of this layer's hazards
 var lane_kind := PackedInt32Array()      # hazard kind, -1 = none
 var lane_count := PackedInt32Array()
@@ -76,6 +80,17 @@ var fx_vx := PackedFloat32Array()
 var fx_vy := PackedFloat32Array()
 var fx_life := PackedFloat32Array()
 var fx_col := PackedColorArray()
+var th_x := PackedFloat32Array()         # thermals (Sahara): columns of updraft
+var th_dx := PackedFloat32Array()
+var th_count := 0
+var thp_x := PackedFloat32Array()
+var thp_y := PackedFloat32Array()
+var region := 0
+var gusty := false
+var haze_on := false
+var thin_air := false
+var jet := false
+var focus_lane := 0                      # the layer the balloon is in (sand haze clears around it)
 var _fx_next := 0
 var last_hit_kind := 0
 var level := 1.0
@@ -98,13 +113,24 @@ var _bal_basket: Array
 var _drone_body: Array
 var _tank: Array
 var _tank_band: Array
-var _statics: Array = []                  # [polygon, closed outline, fill colour]
+var _scn: Array = []                      # per region: a list of [polygon, closed outline, fill colour]
+var _cable_body: Array
+var _cable_roof: Array
+var _glider_canopy: Array
+var _glider_panel: Array
+var _carpet: Array
 var _stream := PackedVector2Array()       # scratch for one streamer
 var _chev := PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
 
 func _ready() -> void:
 	rng.randomize()
 	lane_wind.resize(MAX_LANES)
+	lane_base.resize(MAX_LANES)
+	lane_gph.resize(MAX_LANES)
+	th_x.resize(MAX_THERMALS)
+	th_dx.resize(MAX_THERMALS)
+	thp_x.resize(MAX_THERMALS * THERMAL_PARTS)
+	thp_y.resize(MAX_THERMALS * THERMAL_PARTS)
 	lane_vel.resize(MAX_LANES)
 	lane_kind.resize(MAX_LANES)
 	lane_count.resize(MAX_LANES)
@@ -172,14 +198,42 @@ func _build_shapes() -> void:
 	_drone_body = _pair([Vector2(-28, -6), Vector2(-20, -14), Vector2(20, -14), Vector2(28, -6), Vector2(20, 10), Vector2(-20, 10)])
 	_tank = _pair([Vector2(-12, -16), Vector2(12, -16), Vector2(15, -8), Vector2(15, 10), Vector2(10, 18), Vector2(-10, 18), Vector2(-15, 10), Vector2(-15, -8)])
 	_tank_band = _pair([Vector2(-15, -4), Vector2(15, -4), Vector2(15, 6), Vector2(-15, 6)])
-	# Scenery: low-poly mountains, trees, clouds and sun.
-	_add_static([Vector2(-120, GROUND_Y), Vector2(130, 1560), Vector2(380, GROUND_Y)], Color(0.26, 0.5, 0.36))
-	_add_static([Vector2(240, GROUND_Y), Vector2(560, 1580), Vector2(880, GROUND_Y)], Color(0.2, 0.42, 0.34))
-	_add_static([Vector2(700, GROUND_Y), Vector2(950, 1530), Vector2(1200, GROUND_Y)], Color(0.27, 0.52, 0.38))
-	for tx in [90.0, 210.0, 830.0, 990.0]:
-		_add_static([Vector2(tx - 26, GROUND_Y - 10), Vector2(tx, GROUND_Y - 84), Vector2(tx + 26, GROUND_Y - 10)], Color(0.16, 0.5, 0.26))
-	_add_static([Vector2(-60, 1700), Vector2(1140, 1700), Vector2(1140, 1960), Vector2(-60, 1960)], Color(0.36, 0.62, 0.3))
-	_add_static([Vector2(430, 1700), Vector2(650, 1700), Vector2(650, 1722), Vector2(430, 1722)], Color(0.55, 0.57, 0.62))
+	_cable_body = _pair([Vector2(-34, -14), Vector2(34, -14), Vector2(38, 24), Vector2(-38, 24)])
+	_cable_roof = _pair([Vector2(-30, -14), Vector2(-20, -24), Vector2(20, -24), Vector2(30, -14)])
+	_glider_canopy = _pair([Vector2(-58, 0), Vector2(-44, -26), Vector2(0, -38), Vector2(44, -26), Vector2(58, 0), Vector2(30, -8), Vector2(-30, -8)])
+	_glider_panel = _pair([Vector2(-14, -36), Vector2(14, -36), Vector2(20, -8), Vector2(-20, -8)])
+	_carpet = _pair([Vector2(-52, -5), Vector2(52, -5), Vector2(52, 6), Vector2(-52, 6)])
+	_build_scenery()
+
+# Scenery per region: peaks (with snow caps), trees, dunes, a sun, ground and a launch pad.
+func _build_scenery() -> void:
+	var peak_y := [1560.0, 1440.0, 1630.0, 1370.0]
+	for r in Regions.COUNT:
+		var list: Array = []
+		var py: float = peak_y[r]
+		var gy := GROUND_Y
+		_scn_add(list, [Vector2(-140, gy), Vector2(130, py), Vector2(400, gy)], Regions.PEAK_A[r])
+		_scn_add(list, [Vector2(220, gy), Vector2(560, py + 30.0), Vector2(900, gy)], Regions.PEAK_B[r])
+		_scn_add(list, [Vector2(690, gy), Vector2(950, py - 25.0), Vector2(1220, gy)], Regions.PEAK_A[r])
+		if Regions.SNOW[r].a > 0.5:
+			for pk in [Vector2(130, py), Vector2(560, py + 30.0), Vector2(950, py - 25.0)]:
+				var cap_h: float = (gy - pk.y) * 0.3
+				_scn_add(list, [pk, pk + Vector2(-cap_h * 0.62, cap_h), pk + Vector2(cap_h * 0.62, cap_h)], Regions.SNOW[r])
+		if r == 0 or r == 1:
+			for tx in [90.0, 210.0, 830.0, 990.0]:
+				_scn_add(list, [Vector2(tx - 26, gy - 10), Vector2(tx, gy - 84), Vector2(tx + 26, gy - 10)], Color(0.16, 0.5, 0.26) if r == 0 else Color(0.14, 0.38, 0.3))
+		if r == 2:
+			_scn_add(list, _octagon(Vector2(880, 1600), 70.0, 70.0), Color(1.0, 0.84, 0.3))
+			for cx in [160.0, 760.0]:   # cacti: a box with an arm
+				_scn_add(list, [Vector2(cx - 9, gy), Vector2(cx - 9, gy - 78), Vector2(cx + 9, gy - 78), Vector2(cx + 9, gy)], Color(0.3, 0.55, 0.3))
+				_scn_add(list, [Vector2(cx + 9, gy - 40), Vector2(cx + 30, gy - 40), Vector2(cx + 30, gy - 62), Vector2(cx + 20, gy - 62), Vector2(cx + 20, gy - 50), Vector2(cx + 9, gy - 50)], Color(0.3, 0.55, 0.3))
+		_scn_add(list, [Vector2(-60, gy), Vector2(1140, gy), Vector2(1140, 1960), Vector2(-60, 1960)], Regions.GROUND[r])
+		_scn_add(list, [Vector2(430, gy), Vector2(650, gy), Vector2(650, gy + 22), Vector2(430, gy + 22)], Color(0.55, 0.57, 0.62))
+		_scn.append(list)
+
+func _scn_add(list: Array, pts: Array, fill: Color) -> void:
+	var p := _pair(pts)
+	list.append([p[0], p[1], fill])
 
 static func _octagon(c: Vector2, rx: float, ry: float) -> Array:
 	var pts: Array = []
@@ -188,9 +242,6 @@ static func _octagon(c: Vector2, rx: float, ry: float) -> Array:
 		pts.append(c + Vector2(cos(a) * rx, sin(a) * ry))
 	return pts
 
-func _add_static(pts: Array, fill: Color) -> void:
-	var p := _pair(pts)
-	_statics.append([p[0], p[1], fill])
 
 # ---------------------------------------------------------------------------------------------------------
 # Level setup
@@ -208,11 +259,16 @@ func wind_for(lv: float) -> float:
 ## Lay out a leg of difficulty `lv`: layers, winds, hazards, pickups, coins and particles, all in place.
 ## `seed_val` >= 0 fixes the whole layout (a Flight's legs are the same every time); -1 = random.
 ## `show` fills every slot with every kind (used by the start-up pre-warm).
-func setup(lv: float, show: bool = false, seed_val: int = -1) -> void:
+func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0) -> void:
 	if seed_val >= 0:
 		rng.seed = seed_val
 	level = lv
 	showcase = show
+	region = 2 if show else clampi(reg, 0, Regions.COUNT - 1)
+	gusty = show or Regions.GUSTY[region]
+	haze_on = show or Regions.HAZE[region]
+	thin_air = Regions.THIN_AIR[region]
+	jet = show or Regions.JET[region]
 	_t = 0.0
 	hz_x.fill(0.0)
 	hz_y.fill(0.0)
@@ -225,7 +281,9 @@ func setup(lv: float, show: bool = false, seed_val: int = -1) -> void:
 	var min_gap := Tuning.min_gap_factor * balloon_w
 	var prev := 1.0 if rng.randf() < 0.5 else -1.0
 	var empty_chance := maxf(Tuning.empty_lane_chance - 0.04 * (lv - 1.0), 0.0)
-	var kinds_open := 4 if show else mini(int(lv) + 1, 4)
+	var kinds_open := 4 if show else Regions.kinds_open(region, lv)
+	var klist: Array = Regions.KINDS[region]
+	var wmult := Tuning.countryside_wind_mult if region == 0 and not show else 1.0
 	var any_hazard := false
 	var prev_kind := -1
 	for i in MAX_LANES:
@@ -238,19 +296,30 @@ func setup(lv: float, show: bool = false, seed_val: int = -1) -> void:
 			continue
 		var sgn := -prev if rng.randf() < 0.75 else prev
 		prev = sgn
-		var mag := minf(wind_for(lv) + rng.randf() * Tuning.wind_variation, Tuning.wind_max)
-		lane_wind[i] = sgn * mag
+		var mag := minf(wind_for(lv) * wmult + rng.randf() * Tuning.wind_variation, Tuning.wind_max)
+		var jet_lane: bool = jet and i == n_lanes - 1   # Himalayas: a fast jet stream on top
+		if jet_lane:
+			mag = Tuning.jet_wind
+		lane_base[i] = sgn * mag
+		lane_wind[i] = lane_base[i]
 		lane_vel[i] = lane_wind[i]
-		# The bottom layer (start) and the top one (goal approach) are always clear; the others carry hazards.
-		var hazardous := i > 0 and i < n_lanes - 1
-		if hazardous and not show and rng.randf() < empty_chance and (any_hazard or i < n_lanes - 2):
+		lane_gph[i] = rng.randf() * TAU
+		# The bottom layer (start) is always clear and so is the top one (goal approach), except for a jet stream;
+		# the others carry hazards.
+		var hazardous: bool = i > 0 and (i < n_lanes - 1 or jet_lane)
+		if show:
+			hazardous = i > 0
+		if hazardous and not show and not jet_lane and rng.randf() < empty_chance and (any_hazard or i < n_lanes - 2):
 			hazardous = false
 		if not hazardous:
 			continue
 		any_hazard = true
-		var k := (i % 4) if show else rng.randi() % kinds_open
-		if k == prev_kind and kinds_open > 1 and not show:
-			k = (k + 1 + rng.randi() % (kinds_open - 1)) % kinds_open
+		var k := (i - 1) % 8 if show else GLIDER
+		if not show and not jet_lane:
+			var idx_k := rng.randi() % kinds_open
+			k = klist[idx_k]
+			if k == prev_kind and kinds_open > 1:
+				k = klist[(idx_k + 1 + rng.randi() % (kinds_open - 1)) % kinds_open]
 		prev_kind = k
 		lane_kind[i] = k
 		var sc := Tuning.hazard_scale * clampf(lane_h / 230.0, 0.7, 1.15)
@@ -313,6 +382,16 @@ func setup(lv: float, show: bool = false, seed_val: int = -1) -> void:
 			cn_y[i2] = _lane_cy(i2)
 			cn_on[i2] = 1
 			placed += 1
+	# Thermals: columns of updraft (Sahara; more of them at higher difficulty).
+	th_count = 0
+	if show or Regions.THERMALS[region]:
+		th_count = MAX_THERMALS if show else clampi(2 + int((lv - float(Flights.REGION_BASE[region])) / 3.0), 2, MAX_THERMALS)
+		for t in th_count:
+			th_x[t] = rng.randf_range(160.0, W - 160.0)
+			th_dx[t] = rng.randf_range(-30.0, 30.0)
+			for j in THERMAL_PARTS:
+				thp_x[t * THERMAL_PARTS + j] = rng.randf_range(-0.85, 0.85)
+				thp_y[t * THERMAL_PARTS + j] = rng.randf()
 	# Particles and streamers.
 	for i in n_lanes:
 		for j in PARTS_PER_LANE:
@@ -368,6 +447,10 @@ func wind_at(y: float) -> float:
 func update(dt: float) -> void:
 	_t += dt
 	for i in n_lanes:
+		var k0 := lane_kind[i]
+		if gusty:   # Alps: the layer's wind swells and fades around its steady speed
+			lane_wind[i] = lane_base[i] * (1.0 + Tuning.gust_amp * sin(_t * Tuning.gust_rate + lane_gph[i]))
+			lane_vel[i] = lane_wind[i] * (float(KIND_SPEED[k0]) if k0 >= 0 else 1.0)
 		var wnd := lane_wind[i]
 		for j in PARTS_PER_LANE:
 			var idx := i * PARTS_PER_LANE + j
@@ -412,6 +495,16 @@ func update(dt: float) -> void:
 				cx += RING
 			cn_x[i] = cx
 			cn_y[i] = _lane_cy(i) + sin(_t * 2.3 + float(i) * 1.7) * minf(lane_h * 0.18, 24.0)
+	for t in th_count:
+		var tx := th_x[t] + th_dx[t] * dt
+		if tx > W - 120.0 or tx < 120.0:
+			th_dx[t] = -th_dx[t]
+		th_x[t] = clampf(tx, 120.0, W - 120.0)
+		for j in THERMAL_PARTS:
+			var ti := t * THERMAL_PARTS + j
+			thp_y[ti] -= dt * 0.22
+			if thp_y[ti] < 0.0:
+				thp_y[ti] += 1.0
 	for f in FX_MAX:
 		if fx_life[f] > 0.0:
 			fx_life[f] -= dt
@@ -419,6 +512,25 @@ func update(dt: float) -> void:
 			fx_y[f] += fx_vy[f] * dt
 			fx_vy[f] += 600.0 * dt
 	queue_redraw()
+
+## Extra rise (px/s) from the thermals at horizontal position x (0 outside them).
+func thermal_lift(x: float) -> float:
+	var l := 0.0
+	for t in th_count:
+		var d := absf(x - th_x[t]) / Tuning.thermal_width
+		if d < 1.0:
+			l = maxf(l, Tuning.thermal_lift * (1.0 - d * d))
+	return l
+
+## Opacity of the sand haze over layer i (0 around the balloon's own layer, more with distance).
+func haze_alpha(i: int) -> float:
+	return clampf((float(absi(i - focus_lane)) - Tuning.haze_clear_lanes) * Tuning.haze_per_lane, 0.0, Tuning.haze_max)
+
+## How much of its climb speed the burner keeps at height y (Himalayas: thin air weakens it with altitude).
+func climb_mult_at(y: float) -> float:
+	if not thin_air:
+		return 1.0
+	return 1.0 - Tuning.thin_air_loss * clampf((BAND_BOTTOM - y) / (BAND_BOTTOM - GOAL_Y), 0.0, 1.0)
 
 ## Does the balloon touch a hazard? Its hit circles against each hazard's ellipse.
 func hits(balloon: Balloon) -> bool:
@@ -500,17 +612,26 @@ func clear_fx() -> void:
 func _draw() -> void:
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	# Sky: one tinted band per layer, warm near the ground and deep blue at the top.
-	draw_rect(Rect2(0, 0, W, BAND_TOP), Color(0.27, 0.5, 0.88))
-	draw_rect(Rect2(0, BAND_BOTTOM, W, H - BAND_BOTTOM), Color(1.0, 0.85, 0.65))
+	var c_low: Color = Regions.SKY_LOW[region]
+	var c_mid: Color = Regions.SKY_MID[region]
+	var c_high: Color = Regions.SKY_HIGH[region]
+	draw_rect(Rect2(0, 0, W, BAND_TOP), Regions.SKY_TOP[region])
+	draw_rect(Rect2(0, BAND_BOTTOM, W, H - BAND_BOTTOM), c_low)
 	for i in n_lanes:
 		var t := (float(i) + 0.5) / float(n_lanes)
-		var col := Color(1.0, 0.85, 0.55).lerp(Color(0.62, 0.88, 0.8), minf(t * 2.0, 1.0)) if t < 0.5 else Color(0.62, 0.88, 0.8).lerp(Color(0.3, 0.58, 0.95), (t - 0.5) * 2.0)
+		var col := c_low.lerp(c_mid, minf(t * 2.0, 1.0)) if t < 0.5 else c_mid.lerp(c_high, (t - 0.5) * 2.0)
 		if i % 2 == 1:
 			col = col.lightened(0.07)
 		draw_rect(Rect2(0, BAND_BOTTOM - float(i + 1) * lane_h, W, lane_h + 1.0), col)
 	_draw_scenery_back()
 	for i in n_lanes:
 		_draw_lane_wind(i)
+	for t in th_count:
+		_draw_thermal(t)
+	for i in n_lanes:
+		if lane_kind[i] == CABLE:
+			var cy := _lane_cy(i) - 44.0 * lane_scale[i]
+			draw_line(Vector2(0, cy), Vector2(W, cy), FX_BLACK, 5.0)
 	for i in n_lanes:
 		if pk_on[i] == 1:
 			_draw_tank(pk_x[i], pk_y[i])
@@ -523,6 +644,11 @@ func _draw() -> void:
 			var idx := i * MAX_PER_LANE + j
 			_draw_hazard(k, hz_x[idx], hz_y[idx], signf(lane_vel[i]), lane_scale[i], hz_phase[idx])
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	if haze_on:   # sand haze hides the layers away from the balloon, more the further they are
+		for i in n_lanes:
+			var a := haze_alpha(i)
+			if a > 0.01:
+				draw_rect(Rect2(0, BAND_BOTTOM - float(i + 1) * lane_h, W, lane_h + 1.0), Color(0.93, 0.8, 0.56, a))
 	_draw_goal()
 	for f in FX_MAX:
 		if fx_life[f] > 0.0:
@@ -531,9 +657,24 @@ func _draw() -> void:
 			draw_rect(r, FX_BLACK, false, 2.0)
 
 func _draw_scenery_back() -> void:
-	for s in _statics:
+	for s in _scn[region]:
 		draw_colored_polygon(s[0], s[2])
 		draw_polyline(s[1], FX_BLACK, 4.0)
+
+func _draw_thermal(t: int) -> void:
+	var hw := Tuning.thermal_width
+	var x := th_x[t]
+	draw_rect(Rect2(x - hw, BAND_TOP, hw * 2.0, BAND_BOTTOM - BAND_TOP), Color(1.0, 0.62, 0.2, 0.16))
+	draw_line(Vector2(x - hw, BAND_TOP), Vector2(x - hw, BAND_BOTTOM), Color(1.0, 0.7, 0.3, 0.5), 3.0)
+	draw_line(Vector2(x + hw, BAND_TOP), Vector2(x + hw, BAND_BOTTOM), Color(1.0, 0.7, 0.3, 0.5), 3.0)
+	for j in THERMAL_PARTS:
+		var ti := t * THERMAL_PARTS + j
+		var px := x + thp_x[ti] * hw
+		var py := BAND_TOP + thp_y[ti] * (BAND_BOTTOM - BAND_TOP)
+		_chev[0] = Vector2(px - 14.0, py + 12.0)
+		_chev[1] = Vector2(px, py - 6.0)
+		_chev[2] = Vector2(px + 14.0, py + 12.0)
+		draw_polyline(_chev, Color(1.0, 0.95, 0.7, 0.75), 4.0)
 
 func _draw_goal() -> void:
 	var size := 34.0
@@ -602,20 +743,55 @@ func _draw_coin(x: float, y: float, ph: float) -> void:
 	draw_polyline(Ui.star_closed(), FX_BLACK, 3.0 / 27.0)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
+func _draw_bird(phase: float, body: Color, wing: Color, head: Color, w: float) -> void:
+	var q := int(floor(_t * 7.0 + phase * 0.64)) & 3
+	var frame := 0 if q == 0 else (2 if q == 2 else 1)
+	_fill(_bird_tail, wing, w)
+	_fill(_bird_body, body, w)
+	_fill(_bird_wings[frame], wing, w)
+	_fill(_bird_head, head, w)
+	_fill(_bird_beak, Color(1.0, 0.8, 0.2), w * 0.8)
+	draw_circle(Vector2(22, -8), 3.2, Color.WHITE)
+	draw_circle(Vector2(23, -8), 1.6, FX_BLACK)
+
 func _draw_hazard(k: int, x: float, y: float, dir: float, s: float, phase: float) -> void:
 	draw_set_transform(Vector2(x, y), 0.0, Vector2(dir * s, s))
 	var w := 4.0 / s
 	match k:
 		BIRD:
-			var q := int(floor(_t * 7.0 + phase * 0.64)) & 3
-			var frame := 0 if q == 0 else (2 if q == 2 else 1)
-			_fill(_bird_tail, C_BIRD_WING, w)
-			_fill(_bird_body, C_BIRD, w)
-			_fill(_bird_wings[frame], C_BIRD_WING, w)
-			_fill(_bird_head, C_BIRD, w)
-			_fill(_bird_beak, Color(1.0, 0.8, 0.2), w * 0.8)
-			draw_circle(Vector2(22, -8), 3.2, Color.WHITE)
-			draw_circle(Vector2(23, -8), 1.6, FX_BLACK)
+			if region == 2:   # Sahara: a vulture
+				_draw_bird(phase, Color(0.62, 0.5, 0.34), Color(0.4, 0.3, 0.2), Color(0.85, 0.55, 0.5), w)
+			else:
+				_draw_bird(phase, C_BIRD, C_BIRD_WING, C_BIRD, w)
+		EAGLE:
+			draw_set_transform(Vector2(x, y), 0.0, Vector2(dir * s * 1.3, s * 1.3))
+			_draw_bird(phase, Color(0.5, 0.34, 0.18), Color(0.34, 0.22, 0.12), Color(0.96, 0.94, 0.9), 4.0 / (s * 1.3))
+		CABLE:
+			_fill(_cable_roof, Color(0.3, 0.32, 0.38), w)
+			_fill(_cable_body, Color(0.9, 0.25, 0.25), w)
+			for wx in [-24.0, -6.0, 12.0]:
+				draw_rect(Rect2(wx, -8.0, 14.0, 14.0), Color(0.75, 0.92, 1.0))
+				draw_rect(Rect2(wx, -8.0, 14.0, 14.0), FX_BLACK, false, w * 0.6)
+			draw_line(Vector2(0, -24), Vector2(0, -44), FX_BLACK, w)
+			draw_circle(Vector2(0, -44), 6.0, Color(0.6, 0.62, 0.68))
+		CARPET:
+			_fill(_carpet, Color(0.75, 0.15, 0.35), w)
+			draw_line(Vector2(-46, 0), Vector2(46, 0), Color(1.0, 0.82, 0.2), w * 0.7)
+			for fy in [-3.0, 3.0]:
+				draw_line(Vector2(-52, fy), Vector2(-62, fy), FX_BLACK, w * 0.6)
+				draw_line(Vector2(52, fy), Vector2(62, fy), FX_BLACK, w * 0.6)
+			draw_rect(Rect2(-8.0, -17.0, 16.0, 12.0), Color(0.2, 0.5, 0.8))
+			draw_rect(Rect2(-8.0, -17.0, 16.0, 12.0), FX_BLACK, false, w * 0.7)
+			draw_circle(Vector2(0, -23), 7.0, Color(0.95, 0.75, 0.55))
+			draw_circle(Vector2(0, -27), 6.0, Color(0.95, 0.95, 0.9))
+		GLIDER:
+			draw_line(Vector2(-30, -8), Vector2(0, 24), FX_BLACK, w * 0.7)
+			draw_line(Vector2(30, -8), Vector2(0, 24), FX_BLACK, w * 0.7)
+			_fill(_glider_canopy, Color(0.95, 0.5, 0.15), w)
+			_fill(_glider_panel, Color(1.0, 0.95, 0.8), w * 0.7)
+			draw_rect(Rect2(-5.0, 28.0, 10.0, 16.0), Color(0.2, 0.4, 0.75))
+			draw_rect(Rect2(-5.0, 28.0, 10.0, 16.0), FX_BLACK, false, w * 0.7)
+			draw_circle(Vector2(0, 22), 7.0, Color(0.95, 0.75, 0.55))
 		KITE:
 			_fill(_kite_l, C_KITE_A, w)
 			_fill(_kite_r, C_KITE_B, w)

@@ -119,7 +119,7 @@ func _run() -> void:
 	for i in m.lanes.n_lanes:
 		if m.lanes.lane_kind[i] >= 0:
 			kinds[m.lanes.lane_kind[i]] = true
-	check(kinds.size() == 4, "showcase draws all four hazard kinds")
+	check(kinds.size() == 8, "showcase draws all eight hazard kinds")
 	var guard := 0
 	while m._warming and guard < 2000:
 		await process_frame
@@ -127,7 +127,7 @@ func _run() -> void:
 	var warm_s := (Time.get_ticks_msec() - t0) / 1000.0
 	check(not m._warming, "pre-warm finishes")
 	check(warm_s >= tn.prewarm_min_seconds, "pre-warm lasts at least prewarm_min_seconds (%.1f s)" % warm_s)
-	check(not m.hud.splash.visible and m.hud.menu_p.visible and m.screen == MainS.SCREEN_MENU, "menu after the splash")
+	check(not m.hud.splash.visible and m.hud.map.visible and m.screen == MainS.SCREEN_MAP, "the world map after the splash")
 	check(not m.lanes.showcase and m.lanes.n_lanes == 5, "real level 1 after warm-up (5 layers)")
 	check(m.balloon.heat == 0.0, "balloon cold again")
 	var fx_live := 0
@@ -216,7 +216,7 @@ func _run() -> void:
 			break
 	check(hl >= 1, "level 1 has a hazard layer")
 	var kinds_hit := {}
-	for k in 4:
+	for k in 8:
 		m.start_flight(0)
 		clear_sky(m)
 		b = m.balloon
@@ -237,7 +237,7 @@ func _run() -> void:
 		b.position = Vector2(400.0 + 10.0, cy)
 		m.sim(1.0 / 60.0)
 		kinds_hit[k] = m.screen == MainS.SCREEN_DEAD and m.last_reason == "Crashed into %s" % LanesS.KIND_NAME[k]
-	check(kinds_hit.values().all(func(v): return v), "touching a bird / kite / balloon / drone ends the attempt with its name")
+	check(kinds_hit.values().all(func(v): return v) and kinds_hit.size() == 8, "touching any of the 8 hazard kinds ends the attempt with its name")
 	check(not m.balloon.visible and m.hud.dead_p.visible and m.hud.dead_text.text.contains("Crashed into"), "a crash ends the Flight and shows the failed screen")
 	var spark := 0
 	for f in LanesS.FX_MAX:
@@ -505,6 +505,208 @@ func _run() -> void:
 	sv.reset_all()
 	sv.persist = false
 
+	# ---- 6c. regions ----
+	print("6c. regions")
+	var RegS = load("res://scripts/Regions.gd")
+	check(RegS.COUNT == 4 and RegS.NAMES == ["Countryside", "Alps", "Sahara", "Himalayas"], "four regions")
+	var lows := {}
+	for r in 4:
+		lows[RegS.SKY_LOW[r].to_html()] = true
+	check(lows.size() == 4, "each region has its own palette")
+	check(m.lanes._scn.size() == 4 and m.lanes._scn[1].size() > m.lanes._scn[0].size() - 3, "each region has its own scenery")
+	check(RegS.KINDS[1].has(LanesS.EAGLE) and RegS.KINDS[1].has(LanesS.CABLE), "Alps: eagles and cable cars")
+	check(RegS.KINDS[2].has(LanesS.CARPET) and RegS.KINDS[3].has(LanesS.GLIDER) and RegS.KINDS[3].has(LanesS.EAGLE), "Sahara carpets, Himalayas gliders and eagles")
+	# Hazard sets open up across a region's Flights.
+	for r in 4:
+		var kinds_a := {}
+		var kinds_b := {}
+		for seed_i in 40:
+			m.lanes.setup(FlightsS.eff_level(r, 0, 0), false, 900 + seed_i, r)
+			for i in m.lanes.n_lanes:
+				if m.lanes.lane_kind[i] >= 0 and not (r == 3 and i == m.lanes.n_lanes - 1):
+					kinds_a[m.lanes.lane_kind[i]] = true
+			m.lanes.setup(FlightsS.eff_level(r, 5, 4), false, 950 + seed_i, r)
+			for i in m.lanes.n_lanes:
+				if m.lanes.lane_kind[i] >= 0 and not (r == 3 and i == m.lanes.n_lanes - 1):
+					kinds_b[m.lanes.lane_kind[i]] = true
+		var allowed: Array = RegS.KINDS[r]
+		var ok_early: bool = kinds_a.size() == 2 and kinds_a.keys().all(func(k): return allowed.slice(0, 2).has(k))
+		var ok_late: bool = kinds_b.size() == 4 and kinds_b.keys().all(func(k): return allowed.has(k))
+		check(ok_early and ok_late, "%s: 2 hazard kinds in Flight 1, all 4 by Flight 6 (%s)" % [RegS.NAMES[r], str(kinds_b.keys())])
+	# Difficulty rises across a region's Flights and its legs, and from region to region.
+	check(FlightsS.eff_level(0, 1, 0) > FlightsS.eff_level(0, 0, 0) and FlightsS.eff_level(0, 0, 1) > FlightsS.eff_level(0, 0, 0), "difficulty rises across Flights and legs")
+	check(FlightsS.eff_level(1, 0, 0) > FlightsS.eff_level(0, 0, 0) and FlightsS.eff_level(3, 0, 0) > FlightsS.eff_level(2, 0, 0) and FlightsS.eff_level(2, 5, 4) > FlightsS.eff_level(1, 5, 4), "...and across regions")
+	# Alps: gusts.
+	m.lanes.setup(5.0, false, 11, 1)
+	var base_w: float = m.lanes.lane_base[2]
+	var w_min := 1.0e9
+	var w_max := -1.0e9
+	for i in 400:
+		m.lanes.update(0.1)
+		var ratio: float = m.lanes.lane_wind[2] / base_w
+		w_min = minf(w_min, ratio)
+		w_max = maxf(w_max, ratio)
+	check(m.lanes.gusty and w_min > 0.0 and w_min < 0.6 and w_max > 1.4 and w_max <= 1.0 + tn.gust_amp + 0.001, "Alps: a layer's wind swells and fades over time (x%.2f to x%.2f)" % [w_min, w_max])
+	check(signf(m.lanes.lane_vel[2]) == signf(base_w), "gusts never reverse a layer")
+	m.lanes.setup(2.0, false, 11, 0)
+	var w0: float = m.lanes.lane_wind[2]
+	for i in 100:
+		m.lanes.update(0.1)
+	check(not m.lanes.gusty and m.lanes.lane_wind[2] == w0, "Countryside winds are steady")
+	var gentle := 0.0
+	var brisk := 0.0
+	for seed_i in 30:
+		m.lanes.setup(1.0, false, 100 + seed_i, 0)
+		gentle += absf(m.lanes.lane_wind[1])
+		m.lanes.setup(1.0, false, 100 + seed_i, 2)
+		brisk += absf(m.lanes.lane_wind[1])
+	check(gentle < brisk, "Countryside winds are gentler")
+	# Sahara: thermals and haze.
+	m.lanes.setup(7.0, false, 12, 2)
+	check(m.lanes.th_count >= 2 and m.lanes.haze_on and not m.lanes.thin_air, "Sahara: thermals and haze")
+	var tx: float = m.lanes.th_x[0]
+	check(absf(m.lanes.thermal_lift(tx) - tn.thermal_lift) < 1.0 and m.lanes.thermal_lift(tx + tn.thermal_width + 5.0) < 1.0 or m.lanes.th_count > 1, "a thermal lifts at its centre, not outside")
+	var b1 = m.balloon
+	var rise_no := 0.0
+	var rise_yes := 0.0
+	for pass_i in 2:
+		b1.reset()
+		b1.position.y = 900.0
+		b1.on_ground = false
+		for i in 240:
+			b1.step(1.0 / 60.0, false, true, 0.0, 0.0 if pass_i == 0 else tn.thermal_lift, 1.0)
+			b1.position.y = 900.0
+		if pass_i == 0:
+			rise_no = b1.rise
+		else:
+			rise_yes = b1.rise
+	check(rise_yes > rise_no + tn.thermal_lift * 0.8, "inside a thermal the balloon rises (%.0f vs %.0f px/s)" % [rise_yes, rise_no])
+	m.lanes.focus_lane = 3
+	check(m.lanes.haze_alpha(3) == 0.0 and m.lanes.haze_alpha(4) == 0.0 and m.lanes.haze_alpha(2) == 0.0, "haze: the layers next to the balloon are clear")
+	check(absf(m.lanes.haze_alpha(5) - tn.haze_per_lane) < 0.001 and m.lanes.haze_alpha(6) > m.lanes.haze_alpha(5) and m.lanes.haze_alpha(8) <= tn.haze_max + 0.001, "...and further layers fade into haze, up to a cap")
+	m.lanes.setup(7.0, false, 12, 0)
+	check(m.lanes.th_count == 0 and not m.lanes.haze_on, "no thermals or haze outside the Sahara")
+	# Himalayas: thin air and the jet stream.
+	m.lanes.setup(10.0, false, 5, 3)
+	var nl: int = m.lanes.n_lanes
+	check(m.lanes.thin_air and m.lanes.lane_kind[nl - 1] == LanesS.GLIDER and m.lanes.lane_count[nl - 1] > 0 and absf(m.lanes.lane_base[nl - 1]) == tn.jet_wind, "Himalayas: the top layer is a fast jet stream with paragliders")
+	check(m.lanes.climb_mult_at(LanesS.BAND_BOTTOM) == 1.0 and absf(m.lanes.climb_mult_at(LanesS.GOAL_Y) - (1.0 - tn.thin_air_loss)) < 0.001, "thin air: full burner low down, weaker at the top")
+	var rise_thin := 0.0
+	var rise_full := 0.0
+	for pass_i in 2:
+		b1.reset()
+		b1.position.y = 900.0
+		b1.on_ground = false
+		for i in 300:
+			b1.step(1.0 / 60.0, true, true, 0.0, 0.0, 1.0 if pass_i == 0 else 1.0 - tn.thin_air_loss)
+			b1.position.y = 900.0
+		if pass_i == 0:
+			rise_full = b1.rise
+		else:
+			rise_thin = b1.rise
+	check(rise_thin < rise_full * 0.75, "thin air weakens the climb (%.0f vs %.0f px/s)" % [rise_thin, rise_full])
+	var jet_other := 0
+	for r in 3:
+		for seed_i in 20:
+			m.lanes.setup(FlightsS.eff_level(r, 3, 2), false, 40 + seed_i, r)
+			if m.lanes.lane_count[m.lanes.n_lanes - 1] != 0:
+				jet_other += 1
+	check(jet_other == 0, "only the Himalayas have a hazardous top layer")
+	m.lanes.setup(1.0, false, 3, 0)
+	# Every Flight of the world, every leg: gaps, caps, a clear start layer.
+	var bw: float = BalloonS.WIDTH * tn.balloon_scale
+	var mg: float = tn.min_gap_factor * bw
+	var bad := 0
+	var worst := 99999.0
+	var legs_checked := 0
+	var dens_first := 0.0
+	var dens_last := 0.0
+	for fid in 24:
+		var rr: int = FlightsS.region_of(fid)
+		for l in 5:
+			m.lanes.setup(FlightsS.eff_level(rr, FlightsS.index_of(fid), l), false, FlightsS.leg_seed(FlightsS.seed_of(fid), l), rr)
+			legs_checked += 1
+			var hz := 0
+			if m.lanes.lane_count[0] != 0 or m.lanes.n_lanes > tn.layers_max:
+				bad += 1
+			for i in m.lanes.n_lanes:
+				if absf(m.lanes.lane_base[i]) > maxf(tn.wind_max, tn.jet_wind) + 0.01:
+					bad += 1
+				var c2: int = m.lanes.lane_count[i]
+				hz += c2
+				if c2 == 0:
+					continue
+				var k4: int = m.lanes.lane_kind[i]
+				var w4: float = 2.0 * float(LanesS.KIND_HX[k4]) * m.lanes.lane_scale[i]
+				var xs2: Array[float] = []
+				for j in c2:
+					xs2.append(m.lanes.hz_x[i * LanesS.MAX_PER_LANE + j])
+				xs2.sort()
+				for j in c2:
+					var nxt2: float = xs2[(j + 1) % c2] + (LanesS.RING if j == c2 - 1 else 0.0)
+					var g2: float = nxt2 - xs2[j] - w4
+					worst = minf(worst, g2)
+					if g2 < mg - 0.5:
+						bad += 1
+			if fid == 0 and l == 0:
+				dens_first = float(hz)
+			if fid == 23 and l == 4:
+				dens_last = float(hz)
+	check(bad == 0, "all 24 Flights x 5 legs (%d): every gap >= %.0f px (smallest %.0f), caps respected" % [legs_checked, mg, worst])
+	check(dens_last > dens_first, "the last Flight is denser than the first (%d vs %d hazards)" % [dens_last, dens_first])
+	# Finishing a region's star threshold opens the next region (once).
+	sv.reset_all()
+	for i in 5:
+		sv.data["stars"][i] = 2
+	sv.data["stars"][5] = 1
+	m.start_flight(5)
+	for l in 5:
+		clear_sky(m)
+		m.balloon.position = Vector2(540.0, LanesS.GOAL_Y + 4.0)
+		m.balloon.on_ground = false
+		m.balloon.rise = 250.0
+		m.balloon.heat = 1.0
+		m.leg_started = true
+		if l == 3:
+			m.coins_picked = 9
+			m.fuel = 60.0
+		step(m, 0.05, 1)
+		if l < 4:
+			step(m, 1.5, 0)
+	check(m.screen == MainS.SCREEN_RESULT and sv.region_stars(0) == 13 and sv.region_unlocked(1), "13 stars open the Alps")
+	check(m.hud.result_summary.text.contains("NEW REGION UNLOCKED: Alps"), "the result screen announces the new region")
+	check(sv.take_new_region() == -1, "...only once")
+	check(m.hud.result_next.disabled, "no NEXT after a region's last Flight")
+	m.hud.next_flight_pressed.emit()
+	check(m.screen == MainS.SCREEN_MAP, "NEXT from a region's last Flight goes to the map")
+	sv.reset_all()
+	m.start_flight(0)
+	m._on_next_flight()
+	check(m.screen == MainS.SCREEN_MAP, "NEXT without the next Flight open goes to the map")
+	# Map screen.
+	sv.reset_all()
+	m._show_map()
+	var mp = m.hud.map
+	check(mp.nodes.size() == 24 and mp.visible, "the map has a node for each of the 24 Flights")
+	check(not mp.nodes[0].disabled and mp.nodes[1].disabled and mp.nodes[0].visible and not mp.nodes[6].visible, "only the first Flight is open; later regions are hidden behind a padlock")
+	check(mp.region_locks[1].visible and mp.region_locks[1].text.contains("12") and not mp.region_locks[0].visible, "locked regions say how many stars open them")
+	sv.data["stars"][0] = 3
+	sv.data["stars"][1] = 1
+	mp.refresh()
+	check(not mp.nodes[2].disabled and mp.nodes[3].disabled and mp.stars_label.text == "stars 4/72" and mp.region_stars[0].text.begins_with("4/18"), "stars and unlocks show on the map")
+	check(mp.suggested == 2 or mp.suggested == 1, "a ring marks where to fly next")
+	sv.unlock_everything()
+	mp.refresh()
+	check(mp.nodes[23].visible and not mp.nodes[23].disabled and not mp.region_locks[3].visible, "unlock-all opens every region")
+	sv.reset_all()
+	mp.refresh()
+	mp.nodes[0].pressed.emit()
+	check(m.selected == 0 and m.screen == MainS.SCREEN_MENU, "tapping a node opens the Flight screen")
+	# Save v2: an old (v1) file gets the new fields.
+	var v1: Dictionary = sv._migrate({"version": 1, "coins": 9, "stars": [3], "best_score": [5]})
+	check(v1["seen_regions"].size() == 4 and v1["seen_regions"][0] == true and v1["last_flight"] == 0 and v1["coins"] == 9 and v1["version"] == 2, "a v1 save is migrated to v2")
+	m._show_map()
+
 	# ---- 7. fairness ----
 	print("7. generated levels")
 	var bal_w: float = BalloonS.WIDTH * tn.balloon_scale
@@ -608,22 +810,28 @@ func _run() -> void:
 	var after := snap()
 	check(same(base, after), "no new nodes, materials or resources across 3 restarts (%d nodes, %d resources)" % [after["nodes"], after["resources"]])
 	m.burn_override = 0
-	# Menu <-> Flight buttons.
+	# Map <-> Flight screen buttons.
 	m.hud.menu_pressed.emit()
-	check(m.screen == MainS.SCREEN_MENU and m.hud.menu_p.visible, "MENU returns to the Flight menu")
+	check(m.screen == MainS.SCREEN_MAP and m.hud.map.visible and not m.lanes.visible, "MAP returns to the world map")
 	sv.reset_all()
-	m._select(0)
-	check(m.hud.fly_btn.disabled == false and m.hud.menu_name.text == "FLIGHT 1", "menu shows Flight 1")
-	m._select(2)
-	check(m.hud.fly_btn.disabled, "a locked Flight cannot be flown")
-	m._select(0)
+	m.hud.flight_chosen.emit(0)
+	check(m.screen == MainS.SCREEN_MENU and m.hud.menu_p.visible and m.lanes.visible, "choosing a Flight opens its screen")
+	check(m.hud.fly_btn.disabled == false and m.hud.menu_name.text == "FLIGHT 1" and m.hud.menu_title.text == "Countryside", "Flight 1 of the Countryside")
+	check(m.hud.prev_btn.disabled and not m.hud.next_btn.disabled, "arrows stay inside the region")
+	m.hud.flight_chosen.emit(2)
+	check(m.hud.fly_btn.disabled and m.hud.menu_info.text.begins_with("Locked"), "a locked Flight cannot be flown")
+	m.hud.flight_chosen.emit(0)
+	m.hud.back_pressed.emit()
+	check(m.screen == MainS.SCREEN_MAP, "BACK returns to the map")
+	m.hud.flight_chosen.emit(0)
 	m.hud.fly_pressed.emit()
-	check(m.screen == MainS.SCREEN_PLAY and m.flight_id == 0, "FLY starts the selected Flight")
+	check(m.screen == MainS.SCREEN_PLAY and m.flight_id == 0 and m.lanes.visible, "FLY starts the selected Flight")
 	var allocs_before := snap()
 	m.hud.menu_pressed.emit()
+	m.hud.flight_chosen.emit(0)
 	m.hud.fly_pressed.emit()
 	await process_frame
-	check(same(allocs_before, snap()), "menu / fly cycle allocates nothing")
+	check(same(allocs_before, snap()), "map / Flight screen / fly cycle allocates nothing")
 
 	# ---- 9. frame time ----
 	print("9. frame time")

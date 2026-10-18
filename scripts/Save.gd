@@ -3,7 +3,7 @@ extends Node
 ## storage on the web). New versions only ADD fields: _migrate() fills anything an older file lacks from the
 ## defaults, so old saves keep working. Tests switch `persist` off.
 
-const VERSION := 1
+const VERSION := 2
 const PATH := "user://wind_layers_save.json"
 ## Stars needed in a region (of 18) to open the next one.
 const REGION_UNLOCK_STARS := 12
@@ -29,6 +29,8 @@ func _defaults() -> Dictionary:
 		"best_score": best,       # best score per Flight
 		"flights_played": 0,
 		"unlock_all": false,      # ?tune debug: every region and Flight open
+		"seen_regions": [true, false, false, false],   # regions whose "unlocked" message has been shown (v2)
+		"last_flight": 0,         # the Flight last opened (v2)
 	}
 
 func _load() -> void:
@@ -50,14 +52,15 @@ func _migrate(old: Dictionary) -> Dictionary:
 		var both_numbers: bool = (typeof(old[k]) == TYPE_FLOAT or typeof(old[k]) == TYPE_INT) and (typeof(d[k]) == TYPE_FLOAT or typeof(d[k]) == TYPE_INT)   # JSON gives floats
 		if both_numbers or typeof(old[k]) == typeof(d[k]):
 			d[k] = old[k]
-	for k in ["stars", "best_score"]:
+	for k in ["stars", "best_score", "seen_regions"]:
 		var arr: Array = d[k]
 		for i in arr.size():
-			arr[i] = int(arr[i])
-		while arr.size() < Flights.TOTAL:
-			arr.append(0)
+			arr[i] = bool(arr[i]) if k == "seen_regions" else int(arr[i])
+		while arr.size() < (Flights.REGION_COUNT if k == "seen_regions" else Flights.TOTAL):
+			arr.append(false if k == "seen_regions" else 0)
 	d["coins"] = int(d["coins"])
 	d["flights_played"] = int(d["flights_played"])
+	d["last_flight"] = clampi(int(d["last_flight"]), 0, Flights.TOTAL - 1)
 	d["version"] = VERSION
 	return d
 
@@ -120,6 +123,15 @@ func suggested_flight() -> int:
 			if stars_of(id) < 3:
 				return id
 	return last_open
+
+## Regions that are open but whose message has not been shown yet; marks them seen. Returns the first, or -1.
+func take_new_region() -> int:
+	for r in range(1, Flights.REGION_COUNT):
+		if region_unlocked(r) and not data["seen_regions"][r]:
+			data["seen_regions"][r] = true
+			save()
+			return r
+	return -1
 
 # ---- debug (?tune) ----
 
