@@ -2314,6 +2314,76 @@ func _run() -> void:
 					on_hazard += 1
 	check(on_hazard == 0, "pickups float in the gaps between hazards")
 
+	# ---- 7b. fairness of every Flight under each control scheme (analytic; tests/fairness_sim.gd searches for real paths) ----
+	print("7b. fairness per control scheme: propane, storm, lightning, pickups, goal objects")
+	var bal7: Node = m.balloon
+	var worst_climb := [0.0, 0.0, 0.0]        # propane of a straight climb, per scheme
+	var worst_storm_ratio := [99.0, 99.0, 99.0]   # time the storm needs / time of a straight climb
+	var worst_lt := 0.0                       # slowest escape from a lightning column, as a share of the warning
+	var bad_items := 0
+	var bad_goal := 0
+	var legs7 := 0
+	for fid7 in 24:
+		var r7: int = FlightsS.region_of(fid7)
+		var i7: int = FlightsS.index_of(fid7)
+		for l7 in 5:
+			var sd7: int = FlightsS.leg_seed(FlightsS.seed_of(fid7), l7)
+			var rec7 = FlightsS.leg_recipe(fid7, l7, sd7)
+			m.lanes.setup(FlightsS.eff_level(r7, i7, l7), false, sd7, r7, rec7)
+			var L7 = m.lanes
+			legs7 += 1
+			var n7: int = L7.n_lanes
+			bal7.scheme = BalloonS.LANES
+			# lanes: n+1 hops up (ground -> each layer centre -> the top)
+			var c_l := 0.0
+			for lv7 in range(0, n7 + 1):
+				c_l += tn.hop_fuel / L7.climb_mult_at(bal7.level_y(lv7))
+			# drag / steady: the whole climb, in 20 slices
+			var c_d := 0.0
+			for q7 in 20:
+				var y7: float = lerpf(bal7.floor_y(), LanesS.GOAL_Y, (float(q7) + 0.5) / 20.0)
+				c_d += (bal7.floor_y() - LanesS.GOAL_Y) / 20.0 * 0.01 * tn.climb_burn_per_100px / L7.climb_mult_at(y7)
+			worst_climb[0] = maxf(worst_climb[0], c_l)
+			worst_climb[1] = maxf(worst_climb[1], c_d)
+			worst_climb[2] = maxf(worst_climb[2], c_d)
+			if L7.storm_on:
+				var storm_t: float = (LanesS.GROUND_Y + 160.0 - LanesS.GOAL_Y) / L7.storm_speed
+				var climb_t := [float(n7 + 1) * tn.hop_time, (bal7.floor_y() - LanesS.GOAL_Y) / tn.drag_max_speed, (bal7.floor_y() - LanesS.GOAL_Y) / tn.steady_climb_speed]
+				for sc7 in 3:
+					worst_storm_ratio[sc7] = minf(worst_storm_ratio[sc7], storm_t / climb_t[sc7])
+			if L7.lt_on:   # a balloon in the slowest steady layer must be able to leave the column within the warning (less 0.3 s of reaction)
+				var w_min := 1.0e9
+				for i8 in n7:
+					if L7.lane_rev[i8] == 0.0:
+						w_min = minf(w_min, absf(L7.lane_base[i8]))
+				worst_lt = maxf(worst_lt, (tn.lightning_width * 0.5 + 20.0) / w_min / (tn.lightning_warning - 0.3))
+			# items hang still, on the screen, apart from each other
+			for i8 in n7:
+				if L7.pk_on[i8] == 1 and (L7.pk_x[i8] < LanesS.ITEM_MIN_X - 0.01 or L7.pk_x[i8] > LanesS.W - LanesS.ITEM_MIN_X + 0.01):
+					bad_items += 1
+				if L7.cn_on[i8] == 1 and (L7.cn_x[i8] < LanesS.ITEM_MIN_X - 0.01 or L7.cn_x[i8] > LanesS.W - LanesS.ITEM_MIN_X + 0.01):
+					bad_items += 1
+			for q8 in L7.gs_count:
+				if L7.gs_x[q8] < LanesS.ITEM_MIN_X - 0.01 or L7.gs_x[q8] > LanesS.W - LanesS.ITEM_MIN_X + 0.01:
+					bad_items += 1
+			# goal objects can be reached by a balloon sitting at a layer's centre
+			if rec7.goal == 2:
+				for d8 in 2:
+					var dp: Vector2 = L7.dock_pos(d8)
+					if dp.x < tn.dock_half_w * 0.3 or dp.x > LanesS.W - tn.dock_half_w * 0.3 or absf(dp.y - bal7.level_y(L7.dl_lane[d8])) > tn.dock_half_h * 0.5:
+						bad_goal += 1
+			if rec7.goal == 4 and (L7.ship_x < LanesS.SHIP_MIN_X or L7.ship_x > LanesS.SHIP_MAX_X):
+				bad_goal += 1
+	bal7.scheme = BalloonS.STEADY
+	check(legs7 == 120, "all 120 legs checked (24 Flights x 5)")
+	check(worst_climb[0] <= tn.propane_start * 0.25 and worst_climb[1] <= tn.propane_start * 0.25, "a straight climb costs at most a quarter of a tank in every scheme, thin-air Himalayas legs included (lanes %.1f, drag / steady %.1f of %.0f)" % [worst_climb[0], worst_climb[1], tn.propane_start])
+	check(worst_storm_ratio[0] >= 4.0 and worst_storm_ratio[1] >= 4.0 and worst_storm_ratio[2] >= 3.0, "the storm needs 3x+ the time of a straight climb in every scheme (lanes %.1fx, drag %.1fx, steady %.1fx)" % [worst_storm_ratio[0], worst_storm_ratio[1], worst_storm_ratio[2]])
+	check(worst_lt <= 1.0, "lightning: even the slowest steady layer carries a balloon out of the column within the warning less 0.3 s (%.0f%% of the time)" % (worst_lt * 100.0))
+	check(bad_items == 0, "pickups, coins and stars are always on the screen (they hang still)")
+	check(bad_goal == 0, "mooring platforms are reachable from a layer's centre; the airship stays on screen")
+	m.start_flight(0)
+	m.balloon.scheme = BalloonS.STEADY
+
 	# ---- 8. restart in place ----
 	print("8. restart in place")
 	m.set_process(true)

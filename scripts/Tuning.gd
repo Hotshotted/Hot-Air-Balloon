@@ -17,7 +17,7 @@ var resume_skip_frames := 2
 ## lanes: a tap on the top / bottom half of the screen hops one layer up / down; the hop takes hop_time seconds with
 ## smooth easing, and each hop UP costs hop_fuel propane (a hop inside a thermal, or from a Sandbag, is free).
 var hop_time := 0.35
-var hop_fuel := 4.0
+var hop_fuel := 1.5
 ## drag: the balloon follows the finger 1:1 with only light smoothing (drag_smooth, 1/s; 20 = about 50 ms) and never
 ## faster than drag_max_speed px/s. Releasing holds the altitude.
 var drag_smooth := 20.0
@@ -26,7 +26,7 @@ var drag_max_speed := 1400.0
 var steady_climb_speed := 300.0
 var steady_sink_speed := 110.0
 ## drag and steady: climbing burns climb_burn_per_100px propane per 100 px climbed (descending is free in every scheme).
-var climb_burn_per_100px := 2.2
+var climb_burn_per_100px := 0.9
 ## The balloon's sideways speed is exactly its layer's wind; it blends to a new layer's wind over wind_blend_time seconds.
 var wind_blend_time := 0.25
 ## true: leaving one side of the screen brings the balloon back on the other. false: the edges block.

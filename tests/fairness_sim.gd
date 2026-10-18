@@ -23,6 +23,9 @@ var dt := 0.1
 var margin := 18.0
 var cap := 600
 var tmax_s := 45.0
+var tank := -1.0       # the propane the leg starts with (-1: Tuning.propane_start); the cost of the found path is reported either way
+var extra_s := 6.0     # keep searching this long after the first success, for a cheaper path
+var only_star := -1   # debug: the goal is just this star
 var tn: Node
 var lanes: Node2D
 var bal: Node2D
@@ -53,6 +56,8 @@ func _initialize() -> void:
 			"margin": margin = float(kv[1])
 			"cap": cap = int(kv[1])
 			"tmax": tmax_s = float(kv[1])
+			"only": only_star = int(kv[1])
+			"tank": tank = float(kv[1])
 			"flights":
 				if kv[1] != "all":
 					for x in kv[1].split(","):
@@ -216,10 +221,11 @@ func _solve() -> Array:
 	var burn_px: float = tn.climb_burn_per_100px * 0.01
 	var blocked_top := goal == 1 or goal == 2   # stars / delivery: no going through the top until done
 	var n_stars: int = L.gs_count
-	var all_mask := (1 << n_stars) - 1
+	var all_mask := (1 << n_stars) - 1 if only_star < 0 else (1 << only_star)
 	# state: [x, y, fuel, hop_p, hop_y0, hop_y1, mask]
 	var cur := {}
-	var start := [L.W * 0.5, fy, tn.propane_start, -1, 0.0, 0.0, 0]
+	var tank0: float = tank if tank > 0.0 else tn.propane_start
+	var start := [L.W * 0.5, fy, tank0, -1, 0.0, 0.0, 0]
 	cur[_key(start)] = start
 	var best_fuel_used := 1.0e9
 	var t_ok := -1.0
@@ -230,9 +236,21 @@ func _solve() -> Array:
 		var nxt := {}
 		var kk := k + 1
 		var states: Array = cur.values()
-		if states.size() > cap:
-			states.shuffle()
-			states = states.slice(0, cap)
+		if states.size() > cap:   # keep a random share of every goal-progress group (a mask), so no group starves
+			var groups := {}
+			for st0 in states:
+				var m0: int = st0[6]
+				if not groups.has(m0):
+					groups[m0] = []
+				groups[m0].append(st0)
+			var share: int = maxi(cap / groups.size(), 40)
+			states = []
+			for m0 in groups:
+				var g: Array = groups[m0]
+				if g.size() > share:
+					g.shuffle()
+					g = g.slice(0, share)
+				states.append_array(g)
 		for st in states:
 			var acts: Array = _actions(st, n, lv_hop, ceil_y, fy)
 			for a in acts:
@@ -267,7 +285,7 @@ func _solve() -> Array:
 				if hull:
 					continue
 				if landed:
-					var used: float = tn.propane_start - fuel
+					var used: float = tank0 - fuel
 					if t_ok < 0.0:
 						t_ok = float(kk) * dt
 					best_fuel_used = minf(best_fuel_used, used)
@@ -288,7 +306,7 @@ func _solve() -> Array:
 				elif goal == 2:
 					done_goal = mask == 3
 				if goal != 4 and done_goal and y <= L.GOAL_Y:
-					var used2: float = tn.propane_start - fuel
+					var used2: float = tank0 - fuel
 					if t_ok < 0.0:
 						t_ok = float(kk) * dt
 					best_fuel_used = minf(best_fuel_used, used2)
@@ -297,10 +315,10 @@ func _solve() -> Array:
 				var key := _key(ns)
 				if not nxt.has(key) or (nxt[key][2] < fuel):
 					nxt[key] = ns
-		if t_ok >= 0.0:
+		if t_ok >= 0.0 and float(kk) * dt > t_ok + extra_s:
 			return [t_ok, best_fuel_used]
 		cur = nxt
-	return [-1.0, 0.0]
+	return [t_ok, best_fuel_used] if t_ok >= 0.0 else [-1.0, 0.0]
 
 func _key(st: Array) -> int:
 	var xb := int((st[0] + 200.0) / BUCKET_X)
@@ -308,8 +326,11 @@ func _key(st: Array) -> int:
 	return (((yb * 256 + xb) * 64 + int(st[6])) * 16 + int(st[3]) + 1) * 4096 + int(st[5]) % 4096
 
 ## The moves from a state: [new y, propane, hop_p, hop_y0, hop_y1].
-func _actions(st: Array, n: int, lv_hop: int, ceil_y: float, fy: float) -> Array:
+func _actions(st: Array, n: int, lv_hop: int, ceil_in: float, fy: float) -> Array:
 	var out: Array = []
+	var ceil_y := ceil_in
+	if (recipe.goal == 1 and (st[6] & ((1 << lanes.gs_count) - 1 if only_star < 0 else (1 << only_star))) == ((1 << lanes.gs_count) - 1 if only_star < 0 else (1 << only_star))) or (recipe.goal == 2 and st[6] == 3):
+		ceil_y = -1.0e5   # the goal is met: the top is open
 	var y: float = st[1]
 	var burn_px: float = tn.climb_burn_per_100px * 0.01
 	match scheme:
