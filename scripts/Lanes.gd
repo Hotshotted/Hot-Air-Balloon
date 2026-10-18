@@ -23,18 +23,25 @@ const CHEVRONS_PER_LANE := 4
 const STREAMERS_PER_LANE := 1
 const FX_MAX := 24
 const MAX_COINS := MAX_LANES
+const MAX_STARS := 5
+## Precision Landing: the airship's deck (its top surface) and hull, and the range it drifts over.
+const SHIP_DECK_Y := 250.0
+const SHIP_HULL_H := 56.0
+const SHIP_MIN_X := 270.0
+const SHIP_MAX_X := 810.0
+const CEILING_Y := 100.0       # how high a balloon may fly (above the goal strip)
 const MAX_THERMALS := 3
 const THERMAL_PARTS := 10
 
-enum { BIRD, KITE, BALLOON, DRONE, EAGLE, CABLE, CARPET, GLIDER }
-const KIND_NAME := ["a bird", "a kite", "another balloon", "a drone", "an eagle", "a cable car", "a flying carpet", "a paraglider"]
+enum { BIRD, KITE, BALLOON, DRONE, EAGLE, CABLE, CARPET, GLIDER, GOOSE }
+const KIND_NAME := ["a bird", "a kite", "another balloon", "a drone", "an eagle", "a cable car", "a flying carpet", "a paraglider", "a flock of geese"]
 ## Hit ellipse half sizes, speed relative to the wind of the layer, how much of the free layer height the
 ## hazard bobs through, and bob rate.
-const KIND_HX := [34.0, 30.0, 48.0, 50.0, 46.0, 36.0, 52.0, 56.0]
-const KIND_HY := [22.0, 44.0, 60.0, 20.0, 28.0, 34.0, 16.0, 38.0]
-const KIND_SPEED := [1.55, 0.75, 0.45, 2.1, 1.8, 0.6, 1.3, 0.9]
-const KIND_BOB := [0.35, 1.0, 0.5, 0.6, 0.3, 0.0, 0.8, 0.7]
-const KIND_RATE := [2.2, 1.5, 0.8, 2.6, 2.0, 1.0, 1.8, 1.0]
+const KIND_HX := [34.0, 30.0, 48.0, 50.0, 46.0, 36.0, 52.0, 56.0, 52.0]
+const KIND_HY := [22.0, 44.0, 60.0, 20.0, 28.0, 34.0, 16.0, 38.0, 44.0]
+const KIND_SPEED := [1.55, 0.75, 0.45, 2.1, 1.8, 0.6, 1.3, 0.9, 1.25]
+const KIND_BOB := [0.35, 1.0, 0.5, 0.6, 0.3, 0.0, 0.8, 0.7, 0.5]
+const KIND_RATE := [2.2, 1.5, 0.8, 2.6, 2.0, 1.0, 1.8, 1.0, 1.1]
 
 const C_TANK := Color(0.25, 0.85, 0.4)
 const FX_BLACK := Color(0, 0, 0, 1)
@@ -62,6 +69,41 @@ var cn_x := PackedFloat32Array()      # floating coins (they count toward a Flig
 var cn_y := PackedFloat32Array()
 var cn_on := PackedByteArray()
 var _order := PackedInt32Array()
+var _items := PackedInt32Array()        # items (tank / coin / star) already placed in each layer
+var _base_x := PackedFloat32Array()     # where items go in a layer with no hazards
+# --- this leg's recipe: goal and twists ---
+var recipe: LegRecipe
+var goal := Flights.CLIMB
+var lane_beat := PackedFloat32Array()   # kite layers: beat period (s), 0 = none
+var lane_rev := PackedFloat32Array()    # reversing layers: seconds between flips, 0 = steady
+var lane_rev_off := PackedFloat32Array()
+var _forced := PackedInt32Array()       # hazard kind forced onto a layer by the recipe (-1 = free)
+# Star Collect
+var gs_x := PackedFloat32Array()
+var gs_y := PackedFloat32Array()
+var gs_lane := PackedInt32Array()
+var gs_on := PackedByteArray()
+var gs_count := 0
+# Delivery: two mooring platforms (0 = pick up, 1 = drop off); mail_state 0 = to collect, 1 = carrying, 2 = delivered
+var dl_x := PackedFloat32Array([0.0, 0.0])
+var dl_lane := PackedInt32Array([0, 0])
+var mail_state := 0
+# Rising Storm
+var storm_on := false
+var storm_y := 0.0
+var storm_speed := 0.0
+var storm_go := false                   # Main sets this once the leg has started
+# Precision Landing
+var ship_on := false
+var ship_x := 540.0
+var ship_dir := 1.0
+# Lightning
+var lt_on := false
+var lt_clock := 0.0
+var lt_cols := PackedFloat32Array([0.0, 0.0, 0.0])
+var lt_state := 0                       # 0 idle, 1 warning, 2 striking
+var lt_x := 0.0
+var lt_flash := 0.0
 var fx_x := PackedFloat32Array()
 var fx_y := PackedFloat32Array()
 var fx_vx := PackedFloat32Array()
@@ -115,6 +157,16 @@ func _ready() -> void:
 	cn_y.resize(MAX_COINS)
 	cn_on.resize(MAX_COINS)
 	_order.resize(MAX_LANES)
+	_items.resize(MAX_LANES)
+	_base_x.resize(MAX_LANES)
+	lane_beat.resize(MAX_LANES)
+	lane_rev.resize(MAX_LANES)
+	lane_rev_off.resize(MAX_LANES)
+	_forced.resize(MAX_LANES)
+	gs_x.resize(MAX_STARS)
+	gs_y.resize(MAX_STARS)
+	gs_lane.resize(MAX_STARS)
+	gs_on.resize(MAX_STARS)
 	fx_x.resize(FX_MAX)
 	fx_y.resize(FX_MAX)
 	fx_vx.resize(FX_MAX)
@@ -187,9 +239,11 @@ func wind_for(lv: float) -> float:
 ## Lay out a leg of difficulty `lv`: layers, winds, hazards, pickups, coins and particles, all in place.
 ## `seed_val` >= 0 fixes the whole layout (a Flight's legs are the same every time); -1 = random.
 ## `show` fills every slot with every kind (used by the start-up pre-warm).
-func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0) -> void:
+func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0, rec: LegRecipe = null) -> void:
 	if seed_val >= 0:
 		rng.seed = seed_val
+	recipe = rec
+	goal = rec.goal if rec != null else Flights.CLIMB
 	level = lv
 	showcase = show
 	region = 2 if show else clampi(reg, 0, Regions.COUNT - 1)
@@ -214,6 +268,35 @@ func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0) -> v
 	var wmult := Tuning.countryside_wind_mult if region == 0 and not show else 1.0
 	var any_hazard := false
 	var prev_kind := -1
+	# The recipe's twists pick their layers first: geese and kite-beat layers, reversing layers.
+	_forced.fill(-1)
+	lane_beat.fill(0.0)
+	lane_rev.fill(0.0)
+	_items.fill(0)
+	for i in MAX_LANES:
+		_base_x[i] = rng.randf_range(100.0, W - 100.0)
+	if rec != null and not show:
+		var pool: Array = []
+		for i in range(1, n_lanes - 1):
+			pool.append(i)
+		for a in range(pool.size() - 1, 0, -1):
+			var b := rng.randi() % (a + 1)
+			var tmp: int = pool[a]
+			pool[a] = pool[b]
+			pool[b] = tmp
+		if rec.geese and not pool.is_empty():
+			_forced[pool.pop_back()] = GOOSE
+		if rec.kite_beat and not pool.is_empty():
+			_forced[pool.pop_back()] = KITE
+		if rec.reverse:
+			var rl := 1 + rng.randi() % maxi(n_lanes - 2, 1)
+			lane_rev[rl] = Tuning.reverse_period
+			lane_rev_off[rl] = rng.randf() * Tuning.reverse_period
+			if n_lanes >= 8:   # a second one, out of step with the first
+				var rl2 := 1 + rng.randi() % maxi(n_lanes - 2, 1)
+				if rl2 != rl:
+					lane_rev[rl2] = Tuning.reverse_period * 1.25
+					lane_rev_off[rl2] = rng.randf() * Tuning.reverse_period
 	for i in MAX_LANES:
 		lane_count[i] = 0
 		lane_kind[i] = -1
@@ -236,18 +319,22 @@ func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0) -> v
 		# the others carry hazards.
 		var hazardous: bool = i > 0 and (i < n_lanes - 1 or jet_lane)
 		if show:
-			hazardous = i > 0
-		if hazardous and not show and not jet_lane and rng.randf() < empty_chance and (any_hazard or i < n_lanes - 2):
+			hazardous = true
+		if _forced[i] >= 0:
+			hazardous = true
+		if hazardous and not show and not jet_lane and _forced[i] < 0 and rng.randf() < empty_chance and (any_hazard or i < n_lanes - 2):
 			hazardous = false
 		if not hazardous:
 			continue
 		any_hazard = true
-		var k := (i - 1) % 8 if show else GLIDER
+		var k := i % 9 if show else GLIDER
 		if not show and not jet_lane:
 			var idx_k := rng.randi() % kinds_open
 			k = klist[idx_k]
 			if k == prev_kind and kinds_open > 1:
 				k = klist[(idx_k + 1 + rng.randi() % (kinds_open - 1)) % kinds_open]
+		if _forced[i] >= 0:
+			k = _forced[i]
 		prev_kind = k
 		lane_kind[i] = k
 		var sc := Tuning.hazard_scale * clampf(lane_h / 230.0, 0.7, 1.15)
@@ -267,6 +354,8 @@ func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0) -> v
 			hz_x[idx] = -MARGIN + fposmod(start + float(j) * spacing + rng.randf_range(-0.5, 0.5) * free, RING)
 			hz_phase[idx] = rng.randf() * TAU
 		lane_count[i] = cnt
+		if rec != null and rec.kite_beat and k == KITE:
+			lane_beat[i] = Tuning.kite_beat_period
 	# Pickups: some layers carry propane, floating in the middle of their widest gap.
 	pk_count = 0
 	for i in MAX_COINS:
@@ -276,20 +365,11 @@ func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0) -> v
 			continue
 		pk_on[i] = 1
 		pk_count += 1
-		if lane_count[i] == 0:
-			pk_x[i] = rng.randf_range(100.0, W - 100.0)
-		else:
-			pk_x[i] = _gap_center(i, 0)
+		pk_x[i] = _slot_x(i)
 		pk_y[i] = _lane_cy(i)
-	# Coins: coins_per_leg of them, preferably in layers with no propane (shuffled order, seeded).
+	# Coins: coins_per_leg of them, preferably in layers with no other item (shuffled order, seeded).
 	var n_cand := n_lanes - 1
-	for k in n_cand:
-		_order[k] = k + 1
-	for k in range(n_cand - 1, 0, -1):
-		var r := rng.randi() % (k + 1)
-		var tmp := _order[k]
-		_order[k] = _order[r]
-		_order[r] = tmp
+	_shuffle_lanes(n_cand)
 	var want_coins := mini(int(Tuning.coins_per_leg), n_cand)
 	var placed := 0
 	for pass_i in 2:
@@ -297,19 +377,94 @@ func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0) -> v
 			if placed >= want_coins:
 				break
 			var i2 := _order[k]
-			if cn_on[i2] == 1 or (pass_i == 0 and pk_on[i2] == 1):
+			if cn_on[i2] == 1 or (pass_i == 0 and _items[i2] > 0):
 				continue
-			var cx := 0.0
-			if lane_count[i2] == 0:
-				cx = pk_x[i2] + 300.0 if pk_on[i2] == 1 else rng.randf_range(100.0, W - 100.0)
-			elif pk_on[i2] == 1:
-				cx = _gap_center(i2, 1) if lane_count[i2] >= 2 else pk_x[i2] + 300.0
-			else:
-				cx = _gap_center(i2, 0)
-			cn_x[i2] = -MARGIN + fposmod(cx + MARGIN, RING)
+			cn_x[i2] = _slot_x(i2)
 			cn_y[i2] = _lane_cy(i2)
 			cn_on[i2] = 1
 			placed += 1
+	# Goal objects.
+	gs_count = 0
+	for st in MAX_STARS:
+		gs_on[st] = 0
+	mail_state = 0
+	storm_on = false
+	storm_go = false
+	ship_on = false
+	lt_on = false
+	lt_state = 0
+	lt_flash = 0.0
+	match goal:
+		Flights.STARS:   # Star Collect: every star must be collected before the top counts
+			_shuffle_lanes(n_cand)
+			var want_stars := mini(mini(int(Tuning.stars_per_leg), MAX_STARS), n_cand)
+			for pass_i in 2:
+				for k in n_cand:
+					if gs_count >= want_stars:
+						break
+					var i3 := _order[k]
+					if pass_i == 0 and _items[i3] > 0:
+						continue
+					if pass_i == 1 and _items[i3] >= 2:
+						continue
+					var already := false
+					for q in gs_count:
+						already = already or gs_lane[q] == i3
+					if already:
+						continue
+					gs_lane[gs_count] = i3
+					gs_x[gs_count] = _slot_x(i3)
+					gs_y[gs_count] = _lane_cy(i3)
+					gs_on[gs_count] = 1
+					gs_count += 1
+		Flights.DELIVERY:   # pick the mail up at a mooring platform low down, drop it at one higher up
+			dl_lane[0] = 1 + rng.randi() % maxi(n_lanes - 3, 1)
+			dl_lane[1] = dl_lane[0] + 1 + rng.randi() % maxi(n_lanes - 2 - dl_lane[0], 1)
+			dl_x[0] = rng.randf_range(200.0, 880.0)
+			dl_x[1] = rng.randf_range(200.0, 880.0)
+			if absf(dl_x[1] - dl_x[0]) < 260.0:
+				dl_x[1] = fposmod(dl_x[0] + 380.0 - 100.0, W - 400.0) + 200.0
+		Flights.STORM:   # a storm rising from below the ground
+			storm_on = true
+			storm_y = GROUND_Y + 160.0
+			storm_speed = rec.storm_speed if rec != null else Tuning.storm_speed
+		Flights.LANDING:   # an airship drifting over the top
+			ship_on = true
+			ship_x = rng.randf_range(SHIP_MIN_X + 60.0, SHIP_MAX_X - 60.0)
+			ship_dir = 1.0 if rng.randf() < 0.5 else -1.0
+	if show:   # the pre-warm shows every goal object and twist at once
+		goal = Flights.DELIVERY
+		dl_lane[0] = 2
+		dl_lane[1] = 5
+		dl_x[0] = 300.0
+		dl_x[1] = 760.0
+		gs_count = MAX_STARS
+		for q in MAX_STARS:
+			gs_lane[q] = 1 + q
+			gs_x[q] = 150.0 + float(q) * 190.0
+			gs_y[q] = _lane_cy(1 + q)
+			gs_on[q] = 1
+		ship_on = true
+		ship_x = 540.0
+		storm_on = true
+		storm_y = 1500.0
+		lane_rev[3] = Tuning.reverse_period
+		lane_beat[2] = Tuning.kite_beat_period
+		lt_on = true
+		lt_clock = 2.0
+		for q in 3:
+			lt_cols[q] = W * (0.2 + 0.3 * float(q))
+	if rec != null and rec.lightning:   # periodic lightning: three columns in a repeating order, the first warning after 3 s
+		lt_on = true
+		lt_clock = -3.0
+		var cols := [W * 0.2, W * 0.5, W * 0.8]
+		for a2 in range(2, 0, -1):
+			var b2 := rng.randi() % (a2 + 1)
+			var tmp2: float = cols[a2]
+			cols[a2] = cols[b2]
+			cols[b2] = tmp2
+		for q in 3:
+			lt_cols[q] = cols[q]
 	# Thermals: columns of updraft (Sahara; more of them at higher difficulty).
 	th_count = 0
 	if show or Regions.THERMALS[region]:
@@ -323,6 +478,30 @@ func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0) -> v
 	if prof_on:
 		prof_us[2] += float(Time.get_ticks_usec() - t_setup)
 	update(0.0)
+
+## Shuffle the layers 1..n into _order (seeded).
+func _shuffle_lanes(n_cand: int) -> void:
+	for k in n_cand:
+		_order[k] = k + 1
+	for k in range(n_cand - 1, 0, -1):
+		var r := rng.randi() % (k + 1)
+		var tmp := _order[k]
+		_order[k] = _order[r]
+		_order[r] = tmp
+
+## Where the next item (tank, coin, star) goes in layer i: in a gap between hazards, never on top of another item.
+func _slot_x(i: int) -> float:
+	var k := _items[i]
+	_items[i] = k + 1
+	var c := lane_count[i]
+	var x := 0.0
+	if c == 0:
+		x = _base_x[i] + 300.0 * float(k)
+	elif k < c:
+		x = _gap_center(i, k)
+	else:
+		x = _gap_center(i, 0) + 260.0 * float(k - c + 1)
+	return -MARGIN + fposmod(x + MARGIN, RING)
 
 ## Centre (on the ring) of the rank-th widest gap between the hazards of a layer (rank 0 = widest).
 func _gap_center(i: int, rank: int) -> float:
@@ -366,9 +545,14 @@ func update(dt: float) -> void:
 	_t += dt
 	for i in n_lanes:
 		var k0 := lane_kind[i]
-		if gusty:   # Alps: the layer's wind swells and fades around its steady speed
-			lane_wind[i] = lane_base[i] * (1.0 + Tuning.gust_amp * sin(_t * Tuning.gust_rate + lane_gph[i]))
-			lane_vel[i] = lane_wind[i] * (float(KIND_SPEED[k0]) if k0 >= 0 else 1.0)
+		if gusty or lane_rev[i] > 0.0:   # the layer's wind swells and fades (Alps) and / or flips on a timer
+			var w := lane_base[i]
+			if gusty:
+				w *= 1.0 + Tuning.gust_amp * sin(_t * Tuning.gust_rate + lane_gph[i])
+			if lane_rev[i] > 0.0:
+				w *= clampf(3.0 * sin(PI * (_t + lane_rev_off[i]) / lane_rev[i]), -1.0, 1.0)
+			lane_wind[i] = w
+			lane_vel[i] = w * (float(KIND_SPEED[k0]) if k0 >= 0 else 1.0)
 		var k := lane_kind[i]
 		for j in lane_count[i]:
 			var idx3 := i * MAX_PER_LANE + j
@@ -378,7 +562,10 @@ func update(dt: float) -> void:
 			elif x3 < -MARGIN:
 				x3 += RING
 			hz_x[idx3] = x3
-			hz_y[idx3] = _lane_cy(i) + sin(_t * float(KIND_RATE[k]) + hz_phase[idx3]) * lane_amp[i]
+			if lane_beat[i] > 0.0:   # kites that dip together on a beat: up, up, up, DIP
+				hz_y[idx3] = _lane_cy(i) - lane_amp[i] * 0.45 + lane_amp[i] * 0.9 * Tuning.kite_dip * _dip(fposmod(_t / lane_beat[i] + lane_gph[i] / TAU, 1.0))
+			else:
+				hz_y[idx3] = _lane_cy(i) + sin(_t * float(KIND_RATE[k]) + hz_phase[idx3]) * lane_amp[i]
 		if pk_on[i] == 1 or showcase:
 			var px := pk_x[i] + lane_vel[i] * dt
 			if px >= W + MARGIN:
@@ -396,6 +583,40 @@ func update(dt: float) -> void:
 				cx += RING
 			cn_x[i] = cx
 			cn_y[i] = _lane_cy(i) + sin(_t * 2.3 + float(i) * 1.7) * minf(lane_h * 0.18, 24.0)
+	for q in gs_count:
+		if gs_on[q] == 1 or showcase:
+			var sx := gs_x[q] + lane_vel[gs_lane[q]] * dt
+			if sx >= W + MARGIN:
+				sx -= RING
+			elif sx < -MARGIN:
+				sx += RING
+			gs_x[q] = sx
+			gs_y[q] = _lane_cy(gs_lane[q]) + sin(_t * 2.1 + float(q) * 1.3) * minf(lane_h * 0.18, 24.0)
+	if ship_on:   # the airship drifts to and fro over the top
+		ship_x += ship_dir * Tuning.airship_speed * dt
+		if ship_x > SHIP_MAX_X:
+			ship_x = SHIP_MAX_X
+			ship_dir = -1.0
+		elif ship_x < SHIP_MIN_X:
+			ship_x = SHIP_MIN_X
+			ship_dir = 1.0
+	if storm_on and storm_go:
+		storm_y -= storm_speed * dt
+	if lt_on:
+		lt_clock += dt
+		lt_flash = maxf(lt_flash - dt, 0.0)
+		var phase := fposmod(lt_clock, Tuning.lightning_period)
+		var cycle := int(floor(lt_clock / Tuning.lightning_period)) if lt_clock >= 0.0 else 0
+		var st := 0
+		if lt_clock >= 0.0:
+			if phase >= Tuning.lightning_period - Tuning.lightning_strike:
+				st = 2
+			elif phase >= Tuning.lightning_period - Tuning.lightning_strike - Tuning.lightning_warning:
+				st = 1
+		if st == 1 and lt_state == 0:
+			lt_flash = 0.18   # the warning flash
+		lt_state = st
+		lt_x = lt_cols[cycle % 3]
 	for t in th_count:
 		var tx := th_x[t] + th_dx[t] * dt
 		if tx > W - 120.0 or tx < 120.0:
@@ -484,6 +705,89 @@ func coins_left() -> int:
 	for i in n_lanes:
 		n += cn_on[i]
 	return n
+
+## The kites' dip: 0 at rest, up to 1 at the bottom of the dip (a quick drop, a slower return).
+func _dip(u: float) -> float:
+	if u < 0.62:
+		return 0.0
+	if u < 0.74:
+		return (u - 0.62) / 0.12
+	if u < 0.82:
+		return 1.0
+	return 1.0 - (u - 0.82) / 0.18
+
+## Seconds until layer i flips its wind (0 if it never does): the visible timer.
+func rev_timer(i: int) -> float:
+	if lane_rev[i] <= 0.0:
+		return 0.0
+	return lane_rev[i] - fposmod(_t + lane_rev_off[i], lane_rev[i])
+
+# ---- goals ----
+
+func stars_left() -> int:
+	var n := 0
+	for q in gs_count:
+		n += gs_on[q]
+	return n
+
+## Collect the Star Collect stars the balloon touches; returns how many.
+func collect_stars(balloon: Balloon) -> int:
+	var got := 0
+	for q in gs_count:
+		if gs_on[q] == 0:
+			continue
+		for c in 3:
+			if balloon.hit_pos(c).distance_to(Vector2(gs_x[q], gs_y[q])) < balloon.hit_radius(c) + 32.0:
+				gs_on[q] = 0
+				got += 1
+				burst(Vector2(gs_x[q], gs_y[q]), Color(0.6, 0.95, 1.0), 14, 320.0)
+				break
+	return got
+
+## Where a mooring platform is (0 = pick up, 1 = drop off).
+func dock_pos(which: int) -> Vector2:
+	return Vector2(dl_x[which], _lane_cy(dl_lane[which]))
+
+## Is the balloon at mooring platform `which`?
+func at_dock(balloon: Balloon, which: int) -> bool:
+	var d := balloon.position - dock_pos(which)
+	return absf(d.x) < Tuning.dock_half_w and absf(d.y) < Tuning.dock_half_h
+
+## Where the active mooring target is (the platform to go to next), or Vector2(-1, -1) when the mail is delivered.
+func dock_target() -> Vector2:
+	if mail_state >= 2:
+		return Vector2(-1.0, -1.0)
+	return dock_pos(mail_state)
+
+## The storm covers everything below storm_y: caught when the balloon's basket is in it.
+func storm_hits(balloon: Balloon) -> bool:
+	return storm_on and balloon.position.y + Balloon.BASKET_BOTTOM * balloon.s() * 0.8 > storm_y
+
+## Lightning striking right now on the balloon's column?
+func lightning_hits(balloon: Balloon) -> bool:
+	return lt_on and lt_state == 2 and absf(balloon.position.x - lt_x) < Tuning.lightning_width * 0.5 + 20.0
+
+## Airship and balloon. Returns 0 nothing, 1 landed, 2 hard landing. The hull is solid from below and from the side
+## (the balloon is pushed back under / beside it); only the deck, from above and slowly, counts as a landing.
+func ship_contact(balloon: Balloon) -> int:
+	if not ship_on:
+		return 0
+	var s := balloon.s()
+	var half := Tuning.airship_deck_half
+	var dx := balloon.position.x - ship_x
+	if absf(dx) > half + 28.0 * s:
+		return 0
+	var hull_bottom := SHIP_DECK_Y + SHIP_HULL_H
+	var basket_y := balloon.position.y + Balloon.BASKET_BOTTOM * s
+	var top_y := balloon.position.y - 56.0 * s
+	if top_y < hull_bottom and balloon.position.y > SHIP_DECK_Y:
+		# below / inside the hull: pushed back out underneath it
+		balloon.position.y = hull_bottom + 56.0 * s
+		balloon.rise = minf(balloon.rise, 0.0)
+		return 0
+	if basket_y >= SHIP_DECK_Y and balloon.position.y <= SHIP_DECK_Y and absf(dx) <= half:
+		return 1 if -balloon.rise <= Tuning.land_speed else 2
+	return 0
 
 ## A pooled burst of square sparks.
 func burst(p: Vector2, color: Color, n: int, speed: float) -> void:

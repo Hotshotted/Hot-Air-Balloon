@@ -3,7 +3,7 @@ extends Node
 ## storage on the web). New versions only ADD fields: _migrate() fills anything an older file lacks from the
 ## defaults, so old saves keep working. Tests switch `persist` off.
 
-const VERSION := 5
+const VERSION := 6
 const PATH := "user://wind_layers_save.json"
 ## Stars needed in a region (of 18) to open the next one.
 const REGION_UNLOCK_STARS := 12
@@ -38,6 +38,7 @@ func _defaults() -> Dictionary:
 		"daily_streak": 0,        # consecutive days completed (v5)
 		"ad_counter": 0,          # Flights ended since the last interstitial (v5)
 		"flights_ended": 0,       # Flights ended in total, completed or failed (v5)
+		"tools_seen": 0,          # bit mask of the player tools whose one-line intro has been shown (v6)
 	}
 
 func _owned_default(cat: int) -> Array:
@@ -90,7 +91,7 @@ func _migrate(old: Dictionary) -> Dictionary:
 		d["equipped"][cat] = e if e >= 0 and e < Cosmetics.count(cat) and d["owned"][cat][e] else 0
 	d["coins"] = int(d["coins"])
 	d["flights_played"] = int(d["flights_played"])
-	for k in ["daily_last", "daily_streak", "ad_counter", "flights_ended"]:
+	for k in ["daily_last", "daily_streak", "ad_counter", "flights_ended", "tools_seen"]:
 		d[k] = int(d[k])
 	d["last_flight"] = clampi(int(d["last_flight"]), 0, Flights.TOTAL - 1)
 	d["version"] = VERSION
@@ -221,6 +222,15 @@ func equip(cat: int, i: int) -> bool:
 	data["equipped"][cat] = i
 	save()
 	return true
+
+# ---- player tools ----
+
+func tool_seen(i: int) -> bool:
+	return (int(data["tools_seen"]) >> i) & 1 == 1
+
+func mark_tool_seen(i: int) -> void:
+	data["tools_seen"] = int(data["tools_seen"]) | (1 << i)
+	save()
 
 # ---- Daily Flight ----
 

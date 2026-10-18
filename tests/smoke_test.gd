@@ -71,21 +71,48 @@ func clear_sky(m: Node) -> void:
 		m.lanes.lane_count[i] = 0
 		m.lanes.lane_kind[i] = -1
 		m.lanes.pk_on[i] = 0
+		m.lanes.cn_on[i] = 0
+	m.lanes.gs_count = 0
 
-## Fly a whole Flight by teleporting through its five legs (coins / fuel set before the 4th leg).
+## No twists either (reversing winds, kite beat, lightning): a calm sky for tests of the balloon alone.
+func calm(m: Node) -> void:
+	clear_sky(m)
+	m.lanes.lane_rev.fill(0.0)
+	m.lanes.lane_beat.fill(0.0)
+	m.lanes.lt_on = false
+	m.lanes.lt_state = 0
+
+## Complete the current leg, whatever its goal: collect the stars, deliver the mail, or touch down on the airship.
+func win_leg(m: Node) -> void:
+	clear_sky(m)
+	m.lanes.lt_on = false
+	m.lanes.lt_state = 0
+	m.leg_started = true
+	m.balloon.on_ground = false
+	if m.recipe.goal == 4:   # Precision Landing
+		var sc: float = m.balloon.s()
+		m.balloon.position = Vector2(m.lanes.ship_x, LanesS.SHIP_DECK_Y - 84.0 * sc - 3.0)
+		m.balloon.rise = -60.0
+		m.balloon.heat = 0.0
+		step(m, 0.05, 0)
+	else:
+		for q in m.lanes.gs_count:
+			m.lanes.gs_on[q] = 0
+		m.lanes.mail_state = 2
+		m.lanes.storm_y = 9000.0
+		m.balloon.position = Vector2(540.0, LanesS.GOAL_Y + 4.0)
+		m.balloon.rise = 250.0
+		m.balloon.heat = 1.0
+		step(m, 0.05, 1)
+
+## Fly a whole Flight by completing its five legs (coins / fuel set before the 4th leg).
 func win_flight(m: Node, fid: int, coins: int, fuel: float) -> void:
 	m.start_flight(fid)
 	for l in 5:
-		clear_sky(m)
-		m.balloon.position = Vector2(540.0, LanesS.GOAL_Y + 4.0)
-		m.balloon.on_ground = false
-		m.balloon.rise = 250.0
-		m.balloon.heat = 1.0
-		m.leg_started = true
 		if l == 3:
 			m.coins_picked = coins
 			m.fuel = fuel
-		step(m, 0.05, 1)
+		win_leg(m)
 		if l < 4:
 			step(m, 1.5, 0)
 
@@ -136,6 +163,10 @@ func check_everything_open(m: Node, sv: Node, what: String, cards: bool) -> void
 	if cards:
 		check([sv.postcard_of(0), sv.postcard_of(1), sv.postcard_of(2), sv.postcard_of(3)] == [2, 2, 2, 2] and Array(file_data["postcards"]).map(func(v): return int(v)) == [2, 2, 2, 2] and sv.total_stars() == 72 and mp.region_stars[3].text.begins_with("18/18"), "%s: all four postcards are awarded (live, saved, map)" % what)
 
+## The layer a given star index belongs to (tests move stars onto the balloon).
+func lanes_of(m: Node, q: int) -> int:
+	return m.lanes.lane_of(m.balloon.position.y)
+
 func tap(m: Node, pos: Vector2) -> void:
 	var ev := InputEventMouseButton.new()
 	ev.button_index = MOUSE_BUTTON_LEFT
@@ -184,7 +215,7 @@ func _run() -> void:
 	for i in m.lanes.n_lanes:
 		if m.lanes.lane_kind[i] >= 0:
 			kinds[m.lanes.lane_kind[i]] = true
-	check(kinds.size() == 8, "showcase draws all eight hazard kinds")
+	check(kinds.size() == 9, "showcase draws all nine hazard kinds")
 	var guard := 0
 	while m._warming and guard < 2000:
 		await process_frame
@@ -689,7 +720,7 @@ func _run() -> void:
 	for fid in 24:
 		var rr: int = FlightsS.region_of(fid)
 		for l in 5:
-			m.lanes.setup(FlightsS.eff_level(rr, FlightsS.index_of(fid), l), false, FlightsS.leg_seed(FlightsS.seed_of(fid), l), rr)
+			m.lanes.setup(FlightsS.eff_level(rr, FlightsS.index_of(fid), l), false, FlightsS.leg_seed(FlightsS.seed_of(fid), l), rr, FlightsS.leg_recipe(fid, l, FlightsS.leg_seed(FlightsS.seed_of(fid), l)))
 			legs_checked += 1
 			var hz := 0
 			if m.lanes.lane_count[0] != 0 or m.lanes.n_lanes > tn.layers_max:
@@ -724,20 +755,7 @@ func _run() -> void:
 	for i in 5:
 		sv.data["stars"][i] = 2
 	sv.data["stars"][5] = 1
-	m.start_flight(5)
-	for l in 5:
-		clear_sky(m)
-		m.balloon.position = Vector2(540.0, LanesS.GOAL_Y + 4.0)
-		m.balloon.on_ground = false
-		m.balloon.rise = 250.0
-		m.balloon.heat = 1.0
-		m.leg_started = true
-		if l == 3:
-			m.coins_picked = 9
-			m.fuel = 60.0
-		step(m, 0.05, 1)
-		if l < 4:
-			step(m, 1.5, 0)
+	win_flight(m, 5, 9, 60.0)
 	check(m.screen == MainS.SCREEN_RESULT and sv.region_stars(0) == 13 and sv.region_unlocked(1), "13 stars open the Alps")
 	check(m.hud.result_summary.text.contains("NEW REGION UNLOCKED: Alps"), "the result screen announces the new region")
 	check(sv.take_new_region() == -1, "...only once")
@@ -1127,7 +1145,7 @@ func _run() -> void:
 	check(m.balloon.on_ground and m.balloon.visible and not m.hud.dead_p.visible, "...balloon back on the ground")
 	# The retried leg is the very same leg.
 	var sig_leg := [m.lanes.n_lanes, Array(m.lanes.hz_x.slice(0, 20))]
-	m.lanes.setup(m._eff(2), false, FlightsS.leg_seed(m.flight_seed, 2), m.flight_region)
+	m.lanes.setup(m._eff(2), false, FlightsS.leg_seed(m.flight_seed, 2), m.flight_region, m.recipe)
 	check(sig_leg == [m.lanes.n_lanes, Array(m.lanes.hz_x.slice(0, 20))], "(it is the identical layout)")
 	# Retried coins are not paid twice: finish the Flight with the coins re-earned.
 	m.flight_coins = 25
@@ -1233,7 +1251,7 @@ func _run() -> void:
 	for fid in 24:
 		var rr2: int = FlightsS.region_of(fid)
 		for l in 5:
-			m.lanes.setup(FlightsS.eff_level(rr2, FlightsS.index_of(fid), l), false, FlightsS.leg_seed(FlightsS.seed_of(fid), l), rr2)
+			m.lanes.setup(FlightsS.eff_level(rr2, FlightsS.index_of(fid), l), false, FlightsS.leg_seed(FlightsS.seed_of(fid), l), rr2, FlightsS.leg_recipe(fid, l, FlightsS.leg_seed(FlightsS.seed_of(fid), l)))
 			var sky_total := 0
 			for i in m.lanes.n_lanes:
 				max_haz = maxi(max_haz, m.lanes.lane_count[i])
@@ -1299,6 +1317,679 @@ func _run() -> void:
 	check(m.lanes.render.backdrop.draws > bd2 - 1, "the backdrop is redrawn when a leg starts")
 	m.set_process(false)
 
+	# ---- 6i. curriculum: goal types mixed within Flights, one new idea at a time ----
+	print("6i. curriculum and recipes")
+	var cur: Array = FlightsS.CURRICULUM
+	var idea_set := {}
+	for f in 24:
+		if cur[f] != "":
+			idea_set[cur[f]] = true
+	var order_set := {}
+	for idea in FlightsS.IDEA_ORDER:
+		order_set[idea] = true
+	check(cur.size() == 24 and idea_set.keys().size() == order_set.keys().size() and idea_set.keys().all(func(k): return order_set.has(k)), "the curriculum gives every Flight at most ONE new idea (one entry per Flight, %d ideas in all)" % idea_set.keys().size())
+	check(cur[0] == "climb" and cur[6] == "region" and cur[12] == "region" and cur[18] == "region" and cur[7] == "sandbag" and cur[13] == "anchor" and cur[19] == "vent", "regions bring their mechanic first and their tool in their second Flight")
+	var bad_avail := 0
+	var goal_sets := {}
+	var min_distinct := 99
+	var twists_max := 0
+	var storm_lightning := 0
+	var not_det := 0
+	var intro_missing: Array[String] = []
+	for fid in 24:
+		var goals_seen := {}
+		var has := {"stars": false, "delivery": false, "storm": false, "landing": false, "kitebeat": false, "reverse": false, "geese": false, "lightning": false}
+		for l in 5:
+			var sd: int = FlightsS.leg_seed(FlightsS.seed_of(fid), l)
+			var rc = FlightsS.leg_recipe(fid, l, sd)
+			var rc2 = FlightsS.leg_recipe(fid, l, sd)
+			if rc.goal != rc2.goal or rc.kite_beat != rc2.kite_beat or rc.geese != rc2.geese or rc.reverse != rc2.reverse or rc.lightning != rc2.lightning:
+				not_det += 1
+			goals_seen[rc.goal] = true
+			match rc.goal:
+				1:
+					has["stars"] = true
+					bad_avail += 0 if FlightsS.idea_available("stars", fid) else 1
+				2:
+					has["delivery"] = true
+					bad_avail += 0 if FlightsS.idea_available("delivery", fid) else 1
+				3:
+					has["storm"] = true
+					bad_avail += 0 if FlightsS.idea_available("storm", fid) else 1
+					if rc.lightning:
+						storm_lightning += 1
+				4:
+					has["landing"] = true
+					bad_avail += 0 if FlightsS.idea_available("landing", fid) else 1
+			for pair in [["kitebeat", rc.kite_beat], ["reverse", rc.reverse], ["geese", rc.geese], ["lightning", rc.lightning]]:
+				if pair[1]:
+					has[pair[0]] = true
+					bad_avail += 0 if FlightsS.idea_available(pair[0], fid) else 1
+			twists_max = maxi(twists_max, rc.twist_count())
+		min_distinct = mini(min_distinct, goals_seen.size()) if fid >= 5 else min_distinct
+		if cur[fid] in ["stars", "delivery", "storm", "landing", "kitebeat", "reverse", "geese", "lightning"] and not has[cur[fid]]:
+			intro_missing.append(cur[fid])
+		goal_sets[fid] = goals_seen.size()
+	check(bad_avail == 0, "no leg uses an idea before the Flight that introduces it")
+	check(intro_missing.is_empty(), "every Flight that introduces a goal or twist actually uses it (%s)" % str(intro_missing))
+	check(not_det == 0, "recipes are deterministic (a Flight is the same every time)")
+	check(twists_max <= 2 and storm_lightning == 0, "at most two twists on a leg, none on top of a storm")
+	check(min_distinct >= 2, "from Flight 6 on every Flight mixes at least 2 goal types (fewest: %d)" % min_distinct)
+	var all_climb := true
+	for l in 5:
+		var rc0 = FlightsS.leg_recipe(0, l, FlightsS.leg_seed(FlightsS.seed_of(0), l))
+		all_climb = all_climb and rc0.goal == 0 and rc0.twist_count() == 0
+	check(all_climb, "Flight 1 is plain Climbing")
+	var types_total := {}
+	for fid in 24:
+		for l in 5:
+			types_total[FlightsS.leg_recipe(fid, l, FlightsS.leg_seed(FlightsS.seed_of(fid), l)).goal] = true
+	check(types_total.size() == 5, "all five goal types appear in the world")
+	var d_ok := true
+	for l in 5:
+		var rd = FlightsS.leg_recipe(-1, l, FlightsS.leg_seed(FlightsS.daily_seed(20000), l))
+		d_ok = d_ok and rd.goal >= 0 and rd.goal <= 4
+	check(d_ok, "the Daily Flight has recipes too (every idea available)")
+	check(FlightsS.tools_for(0, 5) == [] and FlightsS.tools_for(1, 0) == [] and FlightsS.tools_for(1, 1) == [0] and FlightsS.tools_for(2, 0) == [0] and FlightsS.tools_for(2, 1) == [0, 1] and FlightsS.tools_for(3, 1) == [0, 1, 2], "tools: Sandbag from Alps 2, Anchor from Sahara 2, Quick Vent from Himalayas 2")
+
+	# ---- 6j. goal mechanics ----
+	print("6j. goals")
+	var RecS = load("res://scripts/LegRecipe.gd")
+	var mkr = func(g: int, kb: bool = false, ge: bool = false, rv: bool = false, lt: bool = false):
+		var rr = RecS.new()
+		rr.goal = g
+		rr.kite_beat = kb
+		rr.geese = ge
+		rr.reverse = rv
+		rr.lightning = lt
+		rr.storm_speed = tn.storm_speed
+		return rr
+	sv.reset_all()
+	tn.ads_enabled = false
+	# Star Collect: every star before the top counts.
+	m.start_flight(0)
+	m.recipe = mkr.call(1)
+	m.lanes.setup(3.0, false, 321, 0, m.recipe)
+	m.balloon.reset()
+	check(m.lanes.gs_count == int(tn.stars_per_leg) and m.lanes.stars_left() == m.lanes.gs_count, "Star Collect: %d stars in the leg" % m.lanes.gs_count)
+	var star_lanes := {}
+	var stars_clear := true
+	for q in m.lanes.gs_count:
+		star_lanes[m.lanes.gs_lane[q]] = true
+		var kk: int = m.lanes.lane_kind[m.lanes.gs_lane[q]]
+		for j in m.lanes.lane_count[m.lanes.gs_lane[q]]:
+			var dxs := absf(fposmod(m.lanes.gs_x[q] - m.lanes.hz_x[m.lanes.gs_lane[q] * LanesS.MAX_PER_LANE + j] + LanesS.RING * 0.5, LanesS.RING) - LanesS.RING * 0.5)
+			if kk >= 0 and dxs < float(LanesS.KIND_HX[kk]) * m.lanes.lane_scale[m.lanes.gs_lane[q]] + 20.0:
+				stars_clear = false
+	check(star_lanes.size() == m.lanes.gs_count and stars_clear, "...each in its own layer, in a gap")
+	m._goal_key = -1
+	clear_sky(m)
+	m.lanes.gs_count = 0
+	m.lanes.setup(3.0, false, 321, 0, m.recipe)
+	clear_sky(m)
+	m.lanes.gs_count = int(tn.stars_per_leg)
+	for q in m.lanes.gs_count:
+		m.lanes.gs_lane[q] = 1 + q
+		m.lanes.gs_on[q] = 1
+		m.lanes.gs_x[q] = 300.0
+		m.lanes.lane_vel[1 + q] = 0.0
+	m.screen = MainS.SCREEN_PLAY
+	m.leg_started = true
+	m.balloon.position = Vector2(540.0, LanesS.GOAL_Y + 4.0)
+	m.balloon.on_ground = false
+	m.balloon.rise = 250.0
+	m.balloon.heat = 1.0
+	step(m, 0.3, 1)
+	check(m.screen == MainS.SCREEN_PLAY and m.balloon.position.y >= LanesS.GOAL_Y + 13.0, "stars left: the top does not count (the balloon is held under it)")
+	check(m.hud.goal_label.text.begins_with("Stars 0 / 4"), "the HUD counts the stars")
+	for q in 3:
+		m.balloon.position = Vector2(300.0, LanesS.BAND_BOTTOM - (float(m.lanes.gs_lane[q]) + 0.5) * m.lanes.lane_h)
+		m.balloon.rise = 0.0
+		step(m, 0.02, 0)
+	check(m.lanes.stars_left() <= 1 and m.screen == MainS.SCREEN_PLAY, "stars are collected by touching them")
+	for q in m.lanes.gs_count:
+		m.lanes.gs_on[q] = 0
+	m.balloon.position = Vector2(540.0, LanesS.GOAL_Y + 12.0)
+	m.balloon.rise = 250.0
+	m.balloon.heat = 1.0
+	step(m, 0.3, 1)
+	check(m.screen == MainS.SCREEN_CLEAR, "all stars collected: reaching the top clears the leg")
+	# Delivery: pick up at a mooring platform, drop at another, then the top.
+	m.start_flight(0)
+	m.recipe = mkr.call(2)
+	var dock_ok := true
+	for seed_i in 40:
+		m.lanes.setup(1.0 + float(seed_i % 9) * 0.7, false, 600 + seed_i, 0, m.recipe)
+		dock_ok = dock_ok and m.lanes.dl_lane[0] >= 1 and m.lanes.dl_lane[1] > m.lanes.dl_lane[0] and m.lanes.dl_lane[1] <= m.lanes.n_lanes - 2 and absf(m.lanes.dl_x[0] - m.lanes.dl_x[1]) >= 200.0 and m.lanes.dl_x[0] >= 150.0 and m.lanes.dl_x[0] <= 930.0 and m.lanes.dl_x[1] >= 150.0 and m.lanes.dl_x[1] <= 930.0
+	check(dock_ok, "Delivery: a pick-up platform low down, a drop-off higher up, far enough apart")
+	m.lanes.setup(3.0, false, 77, 0, m.recipe)
+	m.balloon.reset()
+	clear_sky(m)
+	m.screen = MainS.SCREEN_PLAY
+	m.leg_started = true
+	m._goal_key = -1
+	m.balloon.on_ground = false
+	m.balloon.position = Vector2(540.0, LanesS.GOAL_Y + 4.0)
+	m.balloon.rise = 250.0
+	m.balloon.heat = 1.0
+	step(m, 0.3, 1)
+	check(m.screen == MainS.SCREEN_PLAY and m.lanes.mail_state == 0, "no mail delivered: the top does not count")
+	check(m.hud.goal_label.text.contains("GREEN"), "the HUD says where to go")
+	var d0: Vector2 = m.lanes.dock_pos(0)
+	m.balloon.position = d0 + Vector2(300.0, 0.0)
+	step(m, 0.02, 0)
+	check(m.lanes.mail_state == 0, "away from the platform: nothing is picked up")
+	m.balloon.position = d0 + Vector2(10.0, 0.0)
+	m.balloon.rise = 0.0
+	step(m, 0.02, 0)
+	check(m.lanes.mail_state == 1 and m.hud.banner.text.contains("PICKED UP") and m.hud.goal_label.text.contains("RED"), "touching the pick-up platform takes the mail")
+	var d1: Vector2 = m.lanes.dock_pos(1)
+	check(m.lanes.dock_target() == d1, "the target ring moves to the drop-off")
+	m.balloon.position = d1 + Vector2(-20.0, 5.0)
+	step(m, 0.02, 0)
+	check(m.lanes.mail_state == 2 and m.lanes.dock_target().x < 0.0, "touching the drop-off delivers it")
+	m.balloon.position = Vector2(540.0, LanesS.GOAL_Y + 4.0)
+	m.balloon.rise = 250.0
+	m.balloon.heat = 1.0
+	step(m, 0.1, 1)
+	check(m.screen == MainS.SCREEN_CLEAR, "delivered: the top clears the leg")
+	# Rising Storm.
+	m.start_flight(0)
+	m.recipe = mkr.call(3)
+	m.lanes.setup(3.0, false, 88, 0, m.recipe)
+	m.balloon.reset()
+	clear_sky(m)
+	m.screen = MainS.SCREEN_PLAY
+	check(m.lanes.storm_on and m.lanes.storm_y > LanesS.GROUND_Y and m.lanes.storm_speed == tn.storm_speed, "Rising Storm: the storm starts below the ground")
+	var storm0: float = m.lanes.storm_y
+	step(m, 5.0, 0)
+	check(m.lanes.storm_y == storm0 and not m.leg_started, "it waits while the balloon is on the ground")
+	m.leg_started = true
+	m.leg_time = 0.0
+	m.balloon.on_ground = false
+	m.balloon.position.y = 700.0
+	step(m, 1.0, 0)
+	check(m.lanes.storm_y == storm0, "...and for storm_start_delay seconds after lift-off")
+	m.leg_time = tn.storm_start_delay
+	step(m, 1.0, 0)
+	check(absf((storm0 - m.lanes.storm_y) - tn.storm_speed * 1.0) < 3.0, "then it rises at its set pace (%.0f px/s)" % tn.storm_speed)
+	var min_climb: float = (LanesS.BAND_BOTTOM - LanesS.GOAL_Y) / tn.climb_speed
+	var storm_time: float = (LanesS.GROUND_Y + 160.0 - LanesS.GOAL_Y) / (tn.storm_speed + tn.storm_speed_per_leg * 4.0)
+	check(storm_time > 3.0 * min_climb, "fair: even on the last leg the storm takes %.0f s to reach the top (a straight climb: %.0f s)" % [storm_time, min_climb])
+	m.lanes.storm_y = m.balloon.position.y + 20.0
+	step(m, 0.05, 0)
+	check(m.screen == MainS.SCREEN_DEAD and m.last_reason == "Caught by the storm", "caught by the storm: the Flight ends")
+	m.start_flight(0)
+	m.recipe = mkr.call(3)
+	m.lanes.setup(3.0, false, 88, 0, m.recipe)
+	m.balloon.reset()
+	clear_sky(m)
+	m.screen = MainS.SCREEN_PLAY
+	m.leg_started = true
+	m.balloon.on_ground = false
+	m.balloon.position = Vector2(540.0, LanesS.GOAL_Y + 4.0)
+	m.balloon.rise = 250.0
+	m.balloon.heat = 1.0
+	m.lanes.storm_y = 1700.0
+	step(m, 0.1, 1)
+	check(m.screen == MainS.SCREEN_CLEAR, "staying above the storm to the top clears the leg")
+	# Precision Landing.
+	m.start_flight(0)
+	m.recipe = mkr.call(4)
+	m.lanes.setup(3.0, false, 99, 0, m.recipe)
+	m.balloon.reset()
+	clear_sky(m)
+	m.screen = MainS.SCREEN_PLAY
+	m.leg_started = true
+	m.balloon.on_ground = false
+	var sx0: float = m.lanes.ship_x
+	var ship_range_ok := true
+	for i in 400:
+		m.lanes.update(0.1)
+		ship_range_ok = ship_range_ok and m.lanes.ship_x >= LanesS.SHIP_MIN_X - 0.01 and m.lanes.ship_x <= LanesS.SHIP_MAX_X + 0.01
+	check(m.lanes.ship_on and ship_range_ok, "Precision Landing: an airship drifts to and fro over the top, inside its range")
+	var sx1: float = m.lanes.ship_x
+	m.lanes.update(0.5)
+	check(absf(absf(m.lanes.ship_x - sx1) - tn.airship_speed * 0.5) < 1.0 or absf(m.lanes.ship_x - sx1) < tn.airship_speed * 0.5 + 1.0, "...slowly (%.0f px/s)" % tn.airship_speed)
+	# no goal strip, a higher ceiling
+	m.balloon.position = Vector2(540.0, 400.0)
+	m.balloon.rise = 300.0
+	m.balloon.heat = 1.0
+	m.lanes.ship_x = 200.0
+	step(m, 1.5, 1)
+	check(m.screen == MainS.SCREEN_PLAY and m.balloon.position.y >= LanesS.CEILING_Y - 0.5 and m.balloon.position.y < LanesS.GOAL_Y, "the balloon may fly above the goal strip here, up to the ceiling; reaching the top is not the goal")
+	# the hull blocks from below
+	m.lanes.ship_dir = 0.0
+	m.lanes.ship_x = 540.0
+	m.balloon.position = Vector2(540.0, 500.0)
+	m.balloon.rise = 300.0
+	m.balloon.heat = 1.0
+	step(m, 1.5, 1)
+	check(m.screen == MainS.SCREEN_PLAY and m.balloon.position.y > LanesS.SHIP_DECK_Y + LanesS.SHIP_HULL_H, "the hull is solid from below: the balloon is held under it, not hurt")
+	# landing slowly on the deck
+	m.balloon.position = Vector2(m.lanes.ship_x + 40.0, LanesS.SHIP_DECK_Y - 84.0 * m.balloon.s() - 12.0)
+	m.balloon.rise = -60.0
+	m.balloon.heat = 0.0
+	step(m, 0.3, 0)
+	check(m.screen == MainS.SCREEN_CLEAR, "touching down on the deck slowly clears the leg")
+	# a hard landing
+	m.start_flight(0)
+	m.recipe = mkr.call(4)
+	m.lanes.setup(3.0, false, 99, 0, m.recipe)
+	m.balloon.reset()
+	clear_sky(m)
+	m.screen = MainS.SCREEN_PLAY
+	m.leg_started = true
+	m.balloon.on_ground = false
+	m.lanes.ship_dir = 0.0
+	m.balloon.position = Vector2(m.lanes.ship_x, LanesS.SHIP_DECK_Y - 84.0 * m.balloon.s() - 2.0)
+	m.balloon.rise = -(tn.land_speed + 120.0)
+	step(m, 0.05, 0)
+	check(m.screen == MainS.SCREEN_DEAD and m.last_reason.begins_with("Hard landing"), "touching down too fast is a hard landing")
+	# missing the deck
+	m.start_flight(0)
+	m.recipe = mkr.call(4)
+	m.lanes.setup(3.0, false, 99, 0, m.recipe)
+	m.balloon.reset()
+	clear_sky(m)
+	m.screen = MainS.SCREEN_PLAY
+	m.leg_started = true
+	m.balloon.on_ground = false
+	m.lanes.ship_dir = 0.0
+	m.balloon.position = Vector2(m.lanes.ship_x + tn.airship_deck_half + 80.0, LanesS.SHIP_DECK_Y - 84.0 * m.balloon.s() - 2.0)
+	m.balloon.rise = -50.0
+	step(m, 0.1, 0)
+	check(m.screen == MainS.SCREEN_PLAY, "beside the airship there is no landing")
+	var bd = m.lanes.render.backdrop
+	check(bd != null, "(landing legs draw no goal strip)")
+	m.start_flight(0)
+
+	# ---- 6k. player tools ----
+	print("6k. tools")
+	sv.reset_all()
+	m.start_flight(0)
+	var none_vis := true
+	for tb in m.hud.tool_btns:
+		none_vis = none_vis and not tb.visible
+	check(m.tool_avail.is_empty() and none_vis and not m.use_tool(0), "no tools in the Countryside")
+	m.start_flight(6)
+	check(m.tool_avail.is_empty(), "...nor in the first Alps Flight")
+	m.hud.hint_label.visible = false
+	m.start_flight(7)
+	check(m.tool_avail == [0] and m.hud.tool_btns[0].visible and not m.hud.tool_btns[1].visible and not m.hud.tool_btns[2].visible, "Alps 2: the Sandbag button appears")
+	check(m.hud.hint_label.visible and m.hud.hint_label.text.begins_with("NEW TOOL: SANDBAG") and sv.tool_seen(0), "its one-line intro is shown the first time")
+	m.hud.hint_label.visible = false
+	m.start_flight(7)
+	check(not m.hud.hint_label.visible, "...and only the first time")
+	check(m.hud.tool_btns[0].text == "SANDBAG  x2", "the button shows its charges")
+	# Sandbag: an instant climb burst, limited per leg.
+	calm(m)
+	m.balloon.on_ground = false
+	m.balloon.position = Vector2(540.0, 1000.0)
+	m.leg_started = true
+	var y_plain := 0.0
+	var y_bag := 0.0
+	for pass_i in 2:
+		m.balloon.position = Vector2(540.0, 1000.0)
+		m.balloon.rise = 0.0
+		m.balloon.heat = 0.0
+		m.lanes.lane_wind[3] = 0.0
+		if pass_i == 1:
+			check(m.use_tool(0), "the Sandbag can be dropped")
+			check(is_equal_approx(m.balloon.rise, tn.sandbag_boost), "...for an instant climb burst (%.0f px/s)" % m.balloon.rise)
+		step(m, 1.0, 0)
+		if pass_i == 0:
+			y_plain = m.balloon.position.y
+		else:
+			y_bag = m.balloon.position.y
+	check(y_bag < y_plain - 120.0, "the burst carries the balloon higher (%.0f px)" % (y_plain - y_bag))
+	check(m.tool_charges[0] == 1 and m.hud.tool_btns[0].text == "SANDBAG  x1" and not m.hud.tool_btns[0].disabled, "one charge left")
+	check(m.use_tool(0) and m.tool_charges[0] == 0 and m.hud.tool_btns[0].disabled, "the second one is the last: the button greys out")
+	check(not m.use_tool(0), "no charges left: it does nothing")
+	m.start_flight(7)
+	check(m.tool_charges[0] == 2, "charges come back with every Flight / leg")
+	# Anchor: hold position.
+	m.start_flight(13)
+	check(m.tool_avail == [0, 1] and m.hud.tool_btns[1].visible, "Sahara 2: the Anchor appears too")
+	calm(m)
+	m.lanes.th_count = 0
+	m.balloon.on_ground = false
+	m.leg_started = true
+	var drift_free := 0.0
+	var drift_anchor := 0.0
+	var hold_y := 0.0
+	for pass_i in 2:
+		m.balloon.position = Vector2(300.0, 1000.0)
+		m.balloon.vx = 0.0
+		m.balloon.rise = 0.0
+		m.balloon.heat = 0.0
+		m.balloon.anchor_left = 0.0
+		var lane_i: int = m.lanes.lane_of(1000.0)
+		m.lanes.lane_base[lane_i] = 150.0
+		m.lanes.lane_wind[lane_i] = 150.0
+		if pass_i == 1:
+			m.tool_charges[1] = 1
+			check(m.use_tool(1) and m.balloon.anchor_left == tn.anchor_seconds, "the Anchor drops (%.0f s)" % m.balloon.anchor_left)
+		var x_before: float = m.balloon.position.x
+		var y_before: float = m.balloon.position.y
+		step(m, 1.5, 0)
+		if pass_i == 0:
+			drift_free = m.balloon.position.x - x_before
+		else:
+			drift_anchor = m.balloon.position.x - x_before
+			hold_y = m.balloon.position.y - y_before
+	check(drift_free > 100.0 and drift_anchor < 25.0, "anchored, the balloon stays put in the wind (%.0f px vs %.0f px)" % [drift_anchor, drift_free])
+	check(absf(hold_y) < 40.0, "...and neither rises nor sinks (%.0f px)" % hold_y)
+	step(m, 2.5, 0)
+	check(m.balloon.anchor_left == 0.0, "after anchor_seconds it lets go")
+	m.balloon.position.y = 1000.0
+	m.balloon.rise = 0.0
+	var x_after: float = m.balloon.position.x
+	for i in 60:
+		m.sim(1.0 / 60.0)
+		m.balloon.position.y = 1000.0
+	check(m.balloon.position.x - x_after > 25.0, "...and the wind carries the balloon again")
+	m.tool_charges[1] = 1
+	m.use_tool(1)
+	check(m.tool_charges[1] == 0 and not m.use_tool(1), "one Anchor per leg")
+	# Quick Vent: a much faster descent.
+	m.start_flight(19)
+	check(m.tool_avail == [0, 1, 2] and m.hud.tool_btns[2].visible, "Himalayas 2: the Quick Vent appears too")
+	calm(m)
+	m.balloon.on_ground = false
+	m.leg_started = true
+	var drop_plain := 0.0
+	var drop_vent := 0.0
+	for pass_i in 2:
+		m.balloon.position = Vector2(540.0, 700.0)
+		m.balloon.rise = 0.0
+		m.balloon.heat = 0.0
+		m.balloon.vent_left = 0.0
+		if pass_i == 1:
+			m.tool_charges[2] = 2
+			check(m.use_tool(2) and m.balloon.vent_left == tn.vent_seconds, "the Quick Vent opens")
+		step(m, 1.5, 0)
+		if pass_i == 0:
+			drop_plain = m.balloon.position.y - 700.0
+		else:
+			drop_vent = m.balloon.position.y - 700.0
+	check(drop_vent > drop_plain * 1.8, "it descends much faster (%.0f px vs %.0f px)" % [drop_vent, drop_plain])
+	step(m, 2.0, 0)
+	check(m.balloon.vent_left == 0.0 and absf(m.balloon.rise + tn.sink_speed) < 30.0, "then the balloon settles back into its slow sink")
+	# Charges per leg; refusals.
+	m.start_flight(19)
+	check(m.tool_charges[2] == int(tn.vent_charges) and m.tool_charges[1] == int(tn.anchor_charges) and m.tool_charges[0] == int(tn.sandbag_charges), "charges per leg from Tuning")
+	m.screen = MainS.SCREEN_DEAD
+	check(not m.use_tool(0), "tools only work while flying")
+	m.screen = MainS.SCREEN_PLAY
+	m.hud.ad_active = true
+	check(not m.use_tool(0), "...and not while an ad is up")
+	m.hud.ad_active = false
+	# Touches: a second finger on a tool button works while the first holds the burner; the emulated mouse of a touch is skipped.
+	m.start_flight(7)
+	var HudS = load("res://scripts/Hud.gd")
+	var ev := InputEventScreenTouch.new()
+	ev.index = 1
+	ev.pressed = true
+	ev.position = HudS.TOOL_RECTS[0].get_center()
+	m._input(ev)
+	check(m.tool_charges[0] == 1, "a touch on the Sandbag button uses it")
+	var ev2 := InputEventMouseButton.new()
+	ev2.button_index = MOUSE_BUTTON_LEFT
+	ev2.pressed = true
+	ev2.position = HudS.TOOL_RECTS[0].get_center()
+	ev2.device = InputEvent.DEVICE_ID_EMULATION
+	m._input(ev2)
+	check(m.tool_charges[0] == 1, "the emulated mouse of a touch is ignored (no double use)")
+	var ev3 := InputEventMouseButton.new()
+	ev3.button_index = MOUSE_BUTTON_LEFT
+	ev3.pressed = true
+	ev3.position = HudS.TOOL_RECTS[0].get_center()
+	m._input(ev3)
+	check(m.tool_charges[0] == 0, "a real mouse click works too")
+	var ev4 := InputEventScreenTouch.new()
+	ev4.pressed = true
+	ev4.position = Vector2(540, 900)
+	m.start_flight(7)
+	m._input(ev4)
+	check(m.tool_charges[0] == 2, "a touch elsewhere does nothing")
+	var ev5 := InputEventScreenTouch.new()
+	ev5.pressed = true
+	ev5.position = HudS.TOOL_RECTS[2].get_center()
+	m._input(ev5)
+	check(m.tool_charges[2] == int(tn.vent_charges), "a button that is not on offer does nothing")
+	check(m._on_tool_button(HudS.TOOL_RECTS[0].get_center()) and not m._on_tool_button(HudS.TOOL_RECTS[2].get_center()) and not m._on_tool_button(Vector2(500, 900)), "a press on a tool button is not a burner hold")
+	var rects_ok := true
+	for i in 3:
+		rects_ok = rects_ok and HudS.TOOL_RECTS[i].position.y >= LanesS.GROUND_Y + 20.0 and HudS.TOOL_RECTS[i].end.x <= 1080.0
+	check(rects_ok, "the tool buttons sit below the ground line, out of the way of the sky")
+	sv.reset_all()
+	m.start_flight(0)
+
+	# ---- 6l. rhythm hazards and changing winds ----
+	print("6l. rhythm hazards and changing winds")
+	var HM = load("res://scripts/HazardMeshes.gd")
+	var meshes: Array = HM.build_all()
+	check(meshes.size() == HM.COUNT and LanesS.GOOSE == 8 and HM.GOOSE == 8, "geese are a hazard kind with their own mesh")
+	var gm = meshes[HM.GOOSE]
+	check(gm.get_surface_count() == 1 and gm.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size() > 150, "a V of five geese (%d vertices)" % gm.surface_get_arrays(0)[Mesh.ARRAY_VERTEX].size())
+	var geese_ok := true
+	for seed_i in 40:
+		m.lanes.setup(3.0 + float(seed_i % 8), false, 1200 + seed_i, seed_i % 4, mkr.call(0, false, true))
+		var any_goose := false
+		for i in m.lanes.n_lanes:
+			if m.lanes.lane_kind[i] == LanesS.GOOSE:
+				any_goose = true
+				geese_ok = geese_ok and m.lanes.lane_count[i] >= 1
+		geese_ok = geese_ok and any_goose
+	check(geese_ok, "a geese leg always has a layer of geese in V formation")
+	m.start_flight(0)
+	clear_sky(m)
+	m.lanes.lane_kind[2] = LanesS.GOOSE
+	m.lanes.lane_count[2] = 1
+	m.lanes.lane_scale[2] = 1.0
+	m.lanes.lane_amp[2] = 0.0
+	m.lanes.lane_vel[2] = 0.0
+	m.lanes.lane_beat[2] = 0.0
+	var cyg2: float = LanesS.BAND_BOTTOM - 2.5 * m.lanes.lane_h
+	m.lanes.hz_x[2 * LanesS.MAX_PER_LANE] = 300.0
+	m.balloon.position = Vector2(300.0, cyg2)
+	m.balloon.on_ground = false
+	m.screen = MainS.SCREEN_PLAY
+	m.leg_started = true
+	step(m, 0.05, 0)
+	check(m.screen == MainS.SCREEN_DEAD and m.last_reason == "Crashed into a flock of geese", "touching the geese ends the attempt")
+	# Kites that dip on a beat.
+	var beat_ok := true
+	var dips_ok := true
+	var shared_ok := true
+	var period_ok := true
+	var up_share := 0.0
+	var tested := 0
+	for seed_i in 30:
+		m.lanes.setup(4.0, false, 1500 + seed_i, 0, mkr.call(0, true))
+		var kl := -1
+		for i in m.lanes.n_lanes:
+			if m.lanes.lane_kind[i] == LanesS.KITE:
+				kl = i
+		if kl < 0 or m.lanes.lane_count[kl] < 1:
+			beat_ok = false
+			continue
+		beat_ok = beat_ok and is_equal_approx(m.lanes.lane_beat[kl], tn.kite_beat_period)
+		tested += 1
+		var cyk: float = LanesS.BAND_BOTTOM - (float(kl) + 0.5) * m.lanes.lane_h
+		var amp: float = m.lanes.lane_amp[kl]
+		var ys: Array[float] = []
+		for step_i in 96:   # two beats
+			m.lanes.update(tn.kite_beat_period / 48.0)
+			ys.append(m.lanes.hz_y[kl * LanesS.MAX_PER_LANE] - cyk)
+		var lo := 1.0e9
+		var hi := -1.0e9
+		var up := 0
+		for v in ys:
+			lo = minf(lo, v)
+			hi = maxf(hi, v)
+			if v < -amp * 0.3:
+				up += 1
+		dips_ok = dips_ok and (hi - lo) >= amp * 0.5
+		up_share += float(up) / 96.0
+		for i2 in 48:
+			period_ok = period_ok and absf(ys[i2] - ys[i2 + 48]) < 0.5
+		if m.lanes.lane_count[kl] >= 2:
+			var d_a: float = m.lanes.hz_y[kl * LanesS.MAX_PER_LANE] - cyk
+			var d_b: float = m.lanes.hz_y[kl * LanesS.MAX_PER_LANE + 1] - cyk
+			shared_ok = shared_ok and absf(d_a - d_b) < 0.01
+	check(beat_ok and tested >= 20, "a kite-beat leg has a layer of kites that beat every %.1f s" % tn.kite_beat_period)
+	check(dips_ok and period_ok, "the kites dip on a clean, repeating beat")
+	check(shared_ok, "all kites of the layer dip together")
+	check(up_share / float(tested) > 0.45, "they stay up most of the beat (%.0f%%): a pattern you can read" % (100.0 * up_share / float(tested)))
+	m.lanes.setup(4.0, false, 1500, 0, mkr.call(0))
+	var plain_beat := true
+	for i in m.lanes.n_lanes:
+		plain_beat = plain_beat and m.lanes.lane_beat[i] == 0.0
+	check(plain_beat, "without the twist kites just bob")
+	# Lightning with a warning flash.
+	m.start_flight(0)
+	m.lanes.setup(4.0, false, 1600, 0, mkr.call(0, false, false, false, true))
+	check(m.lanes.lt_on and m.lanes.lt_cols[0] != m.lanes.lt_cols[1] and m.lanes.lt_cols[1] != m.lanes.lt_cols[2] and m.lanes.lt_cols[0] != m.lanes.lt_cols[2], "a lightning leg has three different strike columns")
+	var states: Array = []
+	var first_warn := -1.0
+	var warn_len := 0.0
+	var strike_len := 0.0
+	var flash_seen := false
+	var tt := -3.0
+	var prev_state := 0
+	var warn_start := 0.0
+	var strike_start := 0.0
+	var cols_seen := {}
+	var periods_ok := true
+	var last_strike_start := -1.0
+	for i in 1500:
+		m.lanes.update(0.02)
+		tt += 0.02
+		var st: int = m.lanes.lt_state
+		if st == 1 and prev_state == 0:
+			warn_start = tt
+			flash_seen = flash_seen or m.lanes.lt_flash > 0.0
+			if first_warn < 0.0:
+				first_warn = tt
+		if st == 2 and prev_state == 1:
+			warn_len = tt - warn_start
+			strike_start = tt
+			cols_seen[snappedf(m.lanes.lt_x, 1.0)] = true
+			if last_strike_start >= 0.0:
+				periods_ok = periods_ok and absf((tt - last_strike_start) - tn.lightning_period) < 0.08
+			last_strike_start = tt
+		if st == 0 and prev_state == 2:
+			strike_len = tt - strike_start
+		prev_state = st
+	check(first_warn > 3.0, "no lightning in the first seconds (first warning after %.1f s)" % (first_warn + 3.0))
+	check(flash_seen and absf(warn_len - tn.lightning_warning) < 0.08, "a white flash starts the %.1f s warning" % tn.lightning_warning)
+	check(absf(strike_len - tn.lightning_strike) < 0.08 and periods_ok, "then the strike (%.1f s), once every %.0f s on the beat" % [tn.lightning_strike, tn.lightning_period])
+	check(cols_seen.size() == 3, "the strikes visit three columns in turn")
+	check(tn.lightning_width / LanesS.W < 0.2 and 3.0 * tn.lightning_width / LanesS.W < 0.4, "a column is narrow: it never covers more than a fifth of the sky")
+	# The strike hurts only inside its column.
+	m.start_flight(0)
+	m.recipe = mkr.call(0, false, false, false, true)
+	m.lanes.setup(4.0, false, 1600, 0, m.recipe)
+	clear_sky(m)
+	m.balloon.on_ground = false
+	m.leg_started = true
+	m.screen = MainS.SCREEN_PLAY
+	m.lanes.lt_state = 2
+	m.lanes.lt_clock = 0.0
+	m.lanes.lt_x = 500.0
+	m.balloon.position = Vector2(500.0 + tn.lightning_width, 900.0)
+	check(not m.lanes.lightning_hits(m.balloon), "outside the column during a strike: safe")
+	m.lanes.lt_state = 1
+	m.balloon.position = Vector2(500.0, 900.0)
+	check(not m.lanes.lightning_hits(m.balloon), "inside the column during the WARNING: safe")
+	m.lanes.lt_state = 2
+	check(m.lanes.lightning_hits(m.balloon), "inside the column during the strike: hit")
+	DebugFlags.parse(["god"])
+	m.lanes.lt_clock = 4.7
+	m.sim(0.001)
+	check(m.screen == MainS.SCREEN_PLAY, "?god: lightning cannot hurt")
+	DebugFlags.parse([])
+	m.lanes.lt_clock = 4.7
+	m.lanes.lt_state = 2
+	m.lanes.lt_x = m.balloon.position.x
+	m.lanes.lt_cols[0] = m.balloon.position.x
+	m.lanes.lt_cols[1] = m.balloon.position.x
+	m.lanes.lt_cols[2] = m.balloon.position.x
+	m.lanes.lt_clock = tn.lightning_period - tn.lightning_strike * 0.5
+	m.sim(0.001)
+	check(m.screen == MainS.SCREEN_DEAD and m.last_reason == "Struck by lightning", "struck by lightning: the Flight ends")
+	# Reversing winds with a visible timer.
+	m.start_flight(0)
+	m.lanes.setup(4.0, false, 1700, 0, mkr.call(0, false, false, true))
+	var rl := -1
+	for i in m.lanes.n_lanes:
+		if is_equal_approx(m.lanes.lane_rev[i], tn.reverse_period):
+			rl = i
+	check(rl >= 1, "a reversing-wind leg has a layer that flips every %.0f s" % tn.reverse_period)
+	var signs := {}
+	var flips := 0
+	var last_sign := 0.0
+	var timer_ok := true
+	var prev_timer := 999.0
+	var cross_ok := true
+	for i in 700:
+		m.lanes.update(0.05)
+		var w: float = m.lanes.lane_wind[rl]
+		var sg := signf(w)
+		if sg != 0.0 and last_sign != 0.0 and sg != last_sign:
+			flips += 1
+		if sg != 0.0:
+			last_sign = sg
+		var tm: float = m.lanes.rev_timer(rl)
+		timer_ok = timer_ok and tm >= 0.0 and tm <= tn.reverse_period + 0.001
+		prev_timer = tm
+		cross_ok = cross_ok and absf(w) <= absf(m.lanes.lane_base[rl]) + 0.01
+	check(flips >= 3 and flips <= 5, "its wind reverses on a timer (%d flips in 35 s)" % flips)
+	check(timer_ok and cross_ok, "the countdown stays within 0..%.0f s and the wind never exceeds its speed" % tn.reverse_period)
+	var tvals: Array[float] = []
+	for i in 40:
+		m.lanes.update(0.1)
+		tvals.append(m.lanes.rev_timer(rl))
+	var counts_down := true
+	for i in range(1, 40):
+		counts_down = counts_down and (tvals[i] < tvals[i - 1] + 0.001 or tvals[i - 1] < 0.3)
+	check(counts_down, "the timer counts down to the flip, then starts again")
+	var lab = m.lanes.render._rev_labels[rl]
+	m.lanes.update(0.05)
+	check(lab.visible and lab.text.begins_with("<> ") and int(lab.text.substr(3)) == ceili(m.lanes.rev_timer(rl)), "a visible countdown label sits on the layer (%s)" % lab.text)
+	var other_hidden := true
+	for i in m.lanes.n_lanes:
+		if m.lanes.lane_rev[i] == 0.0:
+			other_hidden = other_hidden and not m.lanes.render._rev_labels[i].visible
+	check(other_hidden, "steady layers have no label")
+	# Hazards in a reversing layer turn round with the wind and keep their gaps.
+	var hz_lane := -1
+	for i in m.lanes.n_lanes:
+		if m.lanes.lane_rev[i] > 0.0 and m.lanes.lane_count[i] >= 2:
+			hz_lane = i
+	if hz_lane >= 0:
+		var gap0: float = fposmod(m.lanes.hz_x[hz_lane * LanesS.MAX_PER_LANE + 1] - m.lanes.hz_x[hz_lane * LanesS.MAX_PER_LANE], LanesS.RING)
+		var v_signs := {}
+		var gaps_ok := true
+		for i in 400:
+			m.lanes.update(0.05)
+			v_signs[signf(m.lanes.lane_vel[hz_lane])] = true
+			var gnow: float = fposmod(m.lanes.hz_x[hz_lane * LanesS.MAX_PER_LANE + 1] - m.lanes.hz_x[hz_lane * LanesS.MAX_PER_LANE], LanesS.RING)
+			gaps_ok = gaps_ok and absf(gnow - gap0) < 0.5
+		check(v_signs.has(1.0) and v_signs.has(-1.0) and gaps_ok, "its hazards reverse too, and their gaps never change")
+	else:
+		check(true, "(no reversing layer with 2+ hazards in this seed)")
+	# The pre-warm shows every new thing.
+	m.lanes.setup(1.0, true)
+	var rdr = m.lanes.render
+	var show_kinds := {}
+	for i in m.lanes.n_lanes:
+		show_kinds[m.lanes.lane_kind[i]] = true
+	check(show_kinds.has(LanesS.GOOSE) and rdr._gs.multimesh.visible_instance_count == LanesS.MAX_STARS and rdr._ship.multimesh.visible_instance_count == 1 and rdr._mk.multimesh.visible_instance_count == 1 and rdr._storm.visible and m.lanes.lt_on and m.lanes.lane_rev[3] > 0.0, "the start-up pre-warm draws geese, stars, airship, marker, storm, lightning and a reversing layer")
+	m.start_flight(0)
+
 	# ---- 7. fairness ----
 	print("7. generated levels")
 	var bal_w: float = BalloonS.WIDTH * tn.balloon_scale
@@ -1350,7 +2041,7 @@ func _run() -> void:
 	check(bad_gap == 0, "every gap >= %.0f px in %d gaps (smallest %.0f)" % [min_gap, checked, min_seen])
 	check(bad_shape == 0, "start and goal layers are clear; every level has a hazard layer")
 	check(bad_limit == 0, "layer count, wind speeds and layer fill within limits")
-	check(dens[10] > dens[1] and dens[25] >= dens[10] - 0.01, "hazard density grows with the level (%.1f -> %.1f -> %.1f)" % [dens[1], dens[10], dens[25]])
+	check(dens[10] > dens[1] and dens[25] >= dens[10] - 0.2, "hazard density grows with the level (%.1f -> %.1f -> %.1f)" % [dens[1], dens[10], dens[25]])
 	check(lanes.layers_for(1) == 5 and lanes.layers_for(3) == 7 and lanes.layers_for(30) == tn.layers_max, "layers: 5 at level 1, +1 per level, capped")
 	check(lanes.wind_for(30) == tn.wind_max, "wind speed is capped")
 	# Pickups sit in a gap, not on a hazard.

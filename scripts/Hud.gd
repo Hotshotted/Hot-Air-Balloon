@@ -30,6 +30,11 @@ var banner: Label
 var splash: ColorRect
 var gauge: Control
 var air_label: Label
+var goal_label: Label
+var hint_label: Label
+var tool_btns: Array[Button] = []
+var _hint_left := 0.0
+var _goal_cache := ""
 var map: MapScreen
 var album: AlbumScreen
 var shop: ShopScreen
@@ -95,6 +100,10 @@ var _gpts := PackedVector2Array()
 var _over33 := 0                       # frames over 33 ms in the last window
 var _frames_win := 0
 var _prof_text := ""
+## Where the three tool buttons are (below the ground line). Touches are handled by Main (so a second finger works
+## while the first holds the burner); the buttons themselves are only drawn.
+const TOOL_RECTS := [Rect2(30, 1742, 320, 110), Rect2(380, 1742, 320, 110), Rect2(730, 1742, 320, 110)]
+const TOOL_NAMES := ["SANDBAG", "ANCHOR", "QUICK VENT"]
 const GRAPH_N := 120
 const GRAPH_MAX_MS := 50.0
 
@@ -126,10 +135,23 @@ func _ready() -> void:
 		var l := Ui.label("", 28, HORIZONTAL_ALIGNMENT_LEFT, Vector2(36.0 + 345.0 * float(i), 6), Vector2(300, 40))
 		prog.add_child(l)
 		prog_labels.append(l)
-	air_label = Ui.label("", 26, HORIZONTAL_ALIGNMENT_LEFT, Vector2(30, 218), Vector2(700, 36))
+	air_label = Ui.label("", 26, HORIZONTAL_ALIGNMENT_RIGHT, Vector2(560, 214), Vector2(490, 34))
 	air_label.add_theme_color_override("font_color", Color(0.75, 0.85, 1.0))
 	air_label.visible = false
 	add_child(air_label)
+	goal_label = Ui.label("", 26, HORIZONTAL_ALIGNMENT_LEFT, Vector2(30, 214), Vector2(700, 34))
+	goal_label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.6))
+	add_child(goal_label)
+	hint_label = Ui.label("", 40, HORIZONTAL_ALIGNMENT_CENTER, Vector2(60, 1010), Vector2(960, 220))
+	hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	hint_label.visible = false
+	add_child(hint_label)
+	for i in 3:
+		var tb := Ui.button(TOOL_NAMES[i], 36, TOOL_RECTS[i].position, TOOL_RECTS[i].size, [Color(0.75, 0.55, 0.25), Color(0.85, 0.6, 0.2), Color(0.35, 0.6, 0.85)][i])
+		tb.mouse_filter = Control.MOUSE_FILTER_IGNORE   # (drawn only: Main handles the touches)
+		tb.visible = false
+		add_child(tb)
+		tool_btns.append(tb)
 	map = MapScreen.new()
 	add_child(map)
 	map.flight_chosen.connect(func(id: int): flight_chosen.emit(id))
@@ -163,7 +185,7 @@ func _ready() -> void:
 	add_child(splash)
 	splash.add_child(Ui.label("WIND LAYERS\nloading...", 64, HORIZONTAL_ALIGNMENT_CENTER, Vector2(0, 780), Vector2(Lanes.W, 300)))
 	if DebugFlags.perf_enabled():
-		_perf_label = Ui.label("", 26, HORIZONTAL_ALIGNMENT_LEFT, Vector2(14, 262), Vector2(900, 400))
+		_perf_label = Ui.label("", 26, HORIZONTAL_ALIGNMENT_LEFT, Vector2(14, 300), Vector2(900, 400))
 		_perf_label.modulate = Color(0.6, 1, 0.6, 0.95)
 		add_child(_perf_label)
 		_ft.resize(GRAPH_N)
@@ -348,10 +370,13 @@ func _draw_prog() -> void:
 
 ## Show or hide the in-flight readouts (flight name, score, gauge, star progress): only while flying.
 func set_flight_hud(on: bool) -> void:
-	for n in [level_label, score_label, coins_label, gauge, prog]:
+	for n in [level_label, score_label, coins_label, gauge, prog, goal_label]:
 		n.visible = on
 	if not on:
 		air_label.visible = false
+		hint_label.visible = false
+		for tb in tool_btns:
+			tb.visible = false
 	elif _air_cache != "":
 		air_label.visible = true
 
@@ -392,6 +417,27 @@ func set_progress(legs_done: int, legs: int, fuel: float, coins: int, coin_targe
 		prog_lit[2] = lit2
 		prog.queue_redraw()
 
+## The leg's goal line under the star progress ("Stars 2/4", "Mail on board: ..."); only re-texted when it changes.
+func set_goal_text(text: String) -> void:
+	if text != _goal_cache:
+		_goal_cache = text
+		goal_label.text = text
+
+## A tool button: whether it is offered, how many charges are left.
+func set_tool(i: int, available: bool, charges: int) -> void:
+	var tb := tool_btns[i]
+	tb.visible = available
+	tb.disabled = charges <= 0
+	var t := "%s  x%d" % [TOOL_NAMES[i], charges]
+	if tb.text != t:
+		tb.text = t
+
+## A one-line intro (a new tool): shown for `secs` seconds.
+func show_hint(text: String, secs: float) -> void:
+	hint_label.text = text
+	hint_label.visible = true
+	_hint_left = secs
+
 func show_banner(text: String, secs: float) -> void:
 	banner.text = text
 	banner.visible = true
@@ -399,6 +445,10 @@ func show_banner(text: String, secs: float) -> void:
 
 func tick(dt: float) -> void:
 	_clock += dt
+	if _hint_left > 0.0:
+		_hint_left -= dt
+		if _hint_left <= 0.0:
+			hint_label.visible = false
 	if fuel_low:
 		gauge.queue_redraw()
 	if _banner_left > 0.0:

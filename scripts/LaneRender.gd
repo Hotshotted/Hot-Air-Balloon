@@ -28,6 +28,17 @@ var _hz_buf: Array = []                  # per mesh id: PackedFloat32Array (12 f
 var _hz_n := PackedInt32Array()          # per mesh id: instances in use
 var _hz_mesh := PackedInt32Array()       # per hazard: its mesh id and instance slot
 var _hz_slot := PackedInt32Array()
+var _gs: MultiMeshInstance2D           # Star Collect stars
+var _mk: MultiMeshInstance2D           # the pulsing target ring on the active mooring platform
+var _ship: MultiMeshInstance2D         # the airship
+var _gs_buf := PackedFloat32Array()
+var _mk_buf := PackedFloat32Array()
+var _ship_buf := PackedFloat32Array()
+var _storm: ColorRect
+var _storm_mat: ShaderMaterial
+var lightning: LightningFx
+var _rev_labels: Array[Label] = []
+var _rev_shown := PackedInt32Array()
 var _tk: MultiMeshInstance2D
 var _cn: MultiMeshInstance2D
 var _tk_buf := PackedFloat32Array()
@@ -42,6 +53,8 @@ var _th_x := PackedFloat32Array()
 var _focus_shown := -1
 var _built := false
 
+## Meshes that are not hazards (they have their own MultiMeshes).
+const SPECIAL := [HazardMeshes.TANK, HazardMeshes.COIN, HazardMeshes.STAR, HazardMeshes.MARKER, HazardMeshes.AIRSHIP]
 const HZ_STRIDE := 12
 const WIND_STRIDE := 16
 const THC_PER := 10
@@ -85,10 +98,16 @@ func _ready() -> void:
 	var meshes := HazardMeshes.build_all()
 	_tk = _make_mm(meshes[HazardMeshes.TANK], Lanes.MAX_LANES, false, hazard_mat, HZ_STRIDE)
 	_cn = _make_mm(meshes[HazardMeshes.COIN], Lanes.MAX_COINS, false, hazard_mat, HZ_STRIDE)
+	_gs = _make_mm(meshes[HazardMeshes.STAR], Lanes.MAX_STARS, false, hazard_mat, HZ_STRIDE)
+	_mk = _make_mm(meshes[HazardMeshes.MARKER], 1, false, hazard_mat, HZ_STRIDE)
+	_ship = _make_mm(meshes[HazardMeshes.AIRSHIP], 1, false, hazard_mat, HZ_STRIDE)
 	_tk_buf.resize(Lanes.MAX_LANES * HZ_STRIDE)
 	_cn_buf.resize(Lanes.MAX_COINS * HZ_STRIDE)
+	_gs_buf.resize(Lanes.MAX_STARS * HZ_STRIDE)
+	_mk_buf.resize(HZ_STRIDE)
+	_ship_buf.resize(HZ_STRIDE)
 	for m in HazardMeshes.COUNT:
-		if m == HazardMeshes.TANK or m == HazardMeshes.COIN:
+		if m in SPECIAL:
 			_hz.append(null)
 			_hz_buf.append(PackedFloat32Array())
 			continue
@@ -105,9 +124,28 @@ func _ready() -> void:
 	_haze.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_haze.material = _haze_mat
 	add_child(_haze)
+	# --- the Rising Storm (above the haze): one quad ---
+	_storm_mat = ShaderMaterial.new()
+	_storm_mat.shader = load("res://shaders/storm.gdshader")
+	_storm = ColorRect.new()
+	_storm.size = Vector2(Lanes.W, Lanes.H)
+	_storm.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_storm.material = _storm_mat
+	_storm.visible = false
+	add_child(_storm)
+	lightning = LightningFx.new()
+	lightning.lanes = lanes
+	add_child(lightning)
 	fx = FxLayer.new()
 	fx.lanes = lanes
 	add_child(fx)
+	# the visible countdown of a reversing layer: a small label at the left edge, one per layer
+	_rev_shown.resize(Lanes.MAX_LANES)
+	for i in Lanes.MAX_LANES:
+		var l := Ui.label("", 30, HORIZONTAL_ALIGNMENT_LEFT, Vector2(8, 0), Vector2(120, 40))
+		l.visible = false
+		add_child(l)
+		_rev_labels.append(l)
 	_built = true
 
 func _make_mm(mesh: Mesh, count: int, colors: bool, mat: Material, _stride: int = WIND_STRIDE) -> MultiMeshInstance2D:
@@ -242,6 +280,24 @@ func on_setup() -> void:
 		_th_mat.set_shader_parameter("th_n", L.th_count)
 		_th_mat.set_shader_parameter("hw", Tuning.thermal_width)
 		_thc_mat.set_shader_parameter("hw", Tuning.thermal_width)
+	# goal objects
+	for q in Lanes.MAX_STARS:
+		var b4 := q * HZ_STRIDE
+		_gs_buf[b4 + 1] = 0.0
+		_gs_buf[b4 + 2] = 0.0
+		_gs_buf[b4 + 4] = 0.0
+		_gs_buf[b4 + 6] = 0.0
+		_gs_buf[b4 + 8] = float(q) * 1.3
+	_gs.multimesh.visible_instance_count = L.gs_count
+	_mk.multimesh.visible_instance_count = 1 if L.goal == Flights.DELIVERY else 0
+	_ship.multimesh.visible_instance_count = 1 if L.ship_on else 0
+	_storm.visible = L.storm_on
+	for i in Lanes.MAX_LANES:   # reversing layers: their countdown labels
+		var on_rev := i < L.n_lanes and L.lane_rev[i] > 0.0
+		_rev_labels[i].visible = on_rev
+		_rev_shown[i] = -1
+		if on_rev:
+			_rev_labels[i].position = Vector2(8.0, Lanes.BAND_BOTTOM - (float(i) + 0.5) * L.lane_h - 20.0)
 	# haze
 	_haze.visible = L.haze_on
 	if L.haze_on:
@@ -333,6 +389,39 @@ func update(dt: float) -> void:
 	if L.haze_on and L.focus_lane != _focus_shown:
 		_focus_shown = L.focus_lane
 		_haze_mat.set_shader_parameter("focus", float(_focus_shown))
+	# goal objects
+	if L.gs_count > 0:
+		for q in L.gs_count:
+			var b5 := q * HZ_STRIDE
+			var on := 1.0 if L.gs_on[q] == 1 else 0.0
+			_gs_buf[b5] = on
+			_gs_buf[b5 + 3] = L.gs_x[q]
+			_gs_buf[b5 + 5] = on
+			_gs_buf[b5 + 7] = L.gs_y[q]
+		_gs.multimesh.buffer = _gs_buf
+	if L.goal == Flights.DELIVERY:
+		var tgt := L.dock_target()
+		var shown := 1.0 if tgt.x >= 0.0 else 0.0
+		_mk_buf[0] = shown
+		_mk_buf[3] = tgt.x
+		_mk_buf[5] = shown
+		_mk_buf[7] = tgt.y
+		_mk.multimesh.buffer = _mk_buf
+	if L.ship_on:
+		_ship_buf[0] = 1.0
+		_ship_buf[3] = L.ship_x
+		_ship_buf[5] = 1.0
+		_ship_buf[7] = Lanes.SHIP_DECK_Y
+		_ship.multimesh.buffer = _ship_buf
+	if L.storm_on:
+		_storm_mat.set_shader_parameter("top_y", L.storm_y)
+	for i in L.n_lanes:
+		if L.lane_rev[i] > 0.0:
+			var secs := ceili(L.rev_timer(i))
+			if secs != _rev_shown[i]:
+				_rev_shown[i] = secs
+				_rev_labels[i].text = "<> %d" % secs
+	lightning.tick()
 	fx.tick()
 	if Lanes.prof_on:
 		Lanes.prof_us[1] += float(Time.get_ticks_usec() - t_prof)

@@ -2,12 +2,17 @@ class_name HazardMeshes
 extends RefCounted
 ## The meshes of every hazard and pickup, built once at start-up from the same low-poly designs the game always
 ## had (design units: origin at the shape's centre, y down; Lanes scales them per layer).
-## Mesh ids: the hazard kinds 0-7 (Lanes.BIRD ... Lanes.GLIDER), VULTURE (a Sahara bird), then TANK and COIN.
+## Mesh ids: the hazard kinds 0-8 (Lanes.BIRD ... Lanes.GOOSE), VULTURE (a Sahara bird), then the pickups and goal objects.
 
-const VULTURE := 8
-const TANK := 9
-const COIN := 10
-const COUNT := 11
+## (the kinds 0-8 are Lanes.BIRD ... Lanes.GOOSE)
+const GOOSE := 8
+const VULTURE := 9
+const TANK := 10
+const COIN := 11
+const STAR := 12      # a Star Collect star
+const MARKER := 13    # the pulsing ring on the active mooring platform
+const AIRSHIP := 14
+const COUNT := 15
 
 const C_KITE_A := Color(1.0, 0.8, 0.2)
 const C_KITE_B := Color(0.95, 0.35, 0.55)
@@ -27,9 +32,13 @@ static func build_all() -> Array:
 	meshes.append(_cable())
 	meshes.append(_carpet())
 	meshes.append(_glider())
+	meshes.append(_geese())
 	meshes.append(_bird(Color(0.62, 0.5, 0.34), Color(0.4, 0.3, 0.2), Color(0.85, 0.55, 0.5)))      # VULTURE
 	meshes.append(_tank())
 	meshes.append(_coin())
+	meshes.append(_star())
+	meshes.append(_marker())
+	meshes.append(_airship())
 	return meshes
 
 static func _bird(body: Color, wing: Color, head: Color) -> ArrayMesh:
@@ -150,4 +159,60 @@ static func _coin() -> ArrayMesh:
 		var a := -PI * 0.5 + TAU * float(i) / 10.0
 		star.append(Vector2(cos(a), sin(a)) * (27.0 if i % 2 == 0 else 12.0))
 	m.poly(star, Color(1.0, 0.82, 0.15), true, 5.0)
+	return m.build()
+
+## Five geese in a V, flapping together. Each goose has its own shoulder (see hazard.gdshader, animation 6).
+static func _geese() -> ArrayMesh:
+	var m := ShapeMesh.new()
+	m.outline_w = 3.5
+	var offs := [Vector2(34, 0), Vector2(14, -22), Vector2(14, 22), Vector2(-8, -44), Vector2(-8, 44)]
+	for g in 5:
+		var o: Vector2 = offs[g]
+		m.poly([o + Vector2(-12, 0), o + Vector2(-5, -5), o + Vector2(8, -5), o + Vector2(12, 1), o + Vector2(6, 5), o + Vector2(-6, 5)], Color(0.92, 0.92, 0.88))
+		m.poly([o + Vector2(-3, -3), o + Vector2(7, -3), o + Vector2(2, -22), o + Vector2(-12, -18)], Color(0.55, 0.57, 0.62), true, 6.0, float(g))
+		m.circle(o + Vector2(14, -3), 4.0, Color(0.2, 0.2, 0.22), false, 0.0, 0.0, 8)
+		m.poly([o + Vector2(17, -4), o + Vector2(24, -2), o + Vector2(17, -1)], BEAK, false)
+	return m.build()
+
+## A cyan Star Collect star with a pulsing ring.
+static func _star() -> ArrayMesh:
+	var m := ShapeMesh.new()
+	m.outline_w = 3.0
+	var ring: Array = []
+	for i in 21:
+		var a := TAU * float(i) / 20.0
+		ring.append(Vector2(cos(a), sin(a)) * 40.0)
+	m.polyline(ring, 3.0, Color(0.6, 0.95, 1.0, 0.5), 4.0)
+	var star: Array = []
+	for i in 10:
+		var a := -PI * 0.5 + TAU * float(i) / 10.0
+		star.append(Vector2(cos(a), sin(a)) * (32.0 if i % 2 == 0 else 14.0))
+	m.poly(star, Color(0.55, 0.95, 1.0), true, 5.0)
+	return m.build()
+
+## The pulsing target ring and a down arrow over the platform to go to.
+static func _marker() -> ArrayMesh:
+	var m := ShapeMesh.new()
+	var ring: Array = []
+	for i in 25:
+		var a := TAU * float(i) / 24.0
+		ring.append(Vector2(cos(a) * 96.0, sin(a) * 64.0))
+	m.polyline(ring, 6.0, Color(1.0, 0.95, 0.3, 0.9), 4.0)
+	m.poly([Vector2(-18, -118), Vector2(18, -118), Vector2(18, -92), Vector2(30, -92), Vector2(0, -66), Vector2(-30, -92), Vector2(-18, -92)], Color(1.0, 0.95, 0.3), true, 4.0)
+	return m.build()
+
+## The airship; the origin is the middle of its deck's top surface (x +-130, hull below).
+static func _airship() -> ArrayMesh:
+	var m := ShapeMesh.new()
+	m.outline_w = 5.0
+	m.poly([Vector2(-150, 6), Vector2(-196, -26), Vector2(-196, 34), Vector2(-140, 36)], Color(0.85, 0.3, 0.3))   # tail fin
+	m.poly([Vector2(-130, 0), Vector2(130, 0), Vector2(166, 18), Vector2(132, 44), Vector2(70, 58), Vector2(-70, 58), Vector2(-132, 44), Vector2(-166, 18)], Color(0.8, 0.84, 0.92))
+	m.poly([Vector2(-150, 24), Vector2(150, 24), Vector2(138, 36), Vector2(-138, 36)], Color(0.9, 0.25, 0.25), false)
+	m.rect(-130.0, -7.0, 260.0, 9.0, Color(0.72, 0.52, 0.3))   # the deck
+	for i in 6:
+		var x := -115.0 + float(i) * 46.0
+		m.line(Vector2(x, -7.0), Vector2(x, -30.0), 4.0, ShapeMesh.BLACK)
+	m.line(Vector2(-118.0, -30.0), Vector2(118.0, -30.0), 4.0, ShapeMesh.BLACK)
+	for i in 4:
+		m.circle(Vector2(-60.0 + float(i) * 40.0, 14.0), 6.0, Color(0.55, 0.85, 1.0), true, 0.0, 0.0, 8)
 	return m.build()

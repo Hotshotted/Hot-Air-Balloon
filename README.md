@@ -11,6 +11,30 @@ A Frogger-style hot air balloon game (working title). Side view, low-poly shapes
 - **Stars per Flight:** 1 for finishing, 1 for finishing with enough propane left (the gold tick on the gauge), 1 for collecting enough of the floating gold coins. Progress toward each is shown under the gauge.
 - **Coins** (currency): per leg cleared, per floating coin collected, and a bonus for leftover propane at the end. Score = legs x 100 + a speed bonus for every second under par.
 
+## Variety, not density
+
+Hazard density and wind speed are capped at moderate values (at most 4 hazards per layer, wind 170 px/s, jet stream 250). Difficulty past that comes from variety only.
+
+**Leg goals**, mixed within a Flight (a Flight's five goals are fixed by its seed; a Flight never repeats a goal back to back, and favours the goals it has used least):
+
+| Goal | What you do |
+| --- | --- |
+| Climb | reach the top (the first Flights are all Climb) |
+| Delivery | pick up the mail at a mooring platform (green flag), drop it at another one higher up (red flag), then climb |
+| Rising Storm | a storm rises from below at a set pace (it starts 2 s after lift-off); stay above it while climbing |
+| Precision Landing | touch down gently on a slowly moving airship over the top; its hull is solid from below, too fast is a hard landing |
+| Star Collect | collect every star in the leg before the top counts |
+
+**Player tools** (buttons below the ground line, with charges per leg; touches are handled in `Main._input`, so a second finger works while the first holds the burner). Each is available from the second Flight of its region on and shows a one-line intro the first time:
+
+- **Sandbag** (Alps): drop it for an instant climb burst, 2 per leg.
+- **Anchor** (Sahara): hold position for 2 s, 1 per leg.
+- **Quick Vent** (Himalayas): dump hot air for a much faster descent, 2 per leg.
+
+**Rhythm hazards** (patterns you can read): geese in V formation (they flap together), kites that dip together on a 2.4 s beat, periodic lightning (a white flash and a blinking column for 1.1 s, then the strike; three columns in a repeating order). **Changing winds:** some layers reverse on a visible countdown (`<> 5`), hazards and all.
+
+**Curriculum** (`Flights.CURRICULUM`): every Flight introduces at most one new idea and its legs only use ideas introduced so far: Climb, Star Collect, kite beat, Delivery, reversing winds, Rising Storm in the Countryside; the Alps add gusts, then the Sandbag, geese, Precision Landing and lightning; the Sahara their thermals and haze, then the Anchor; the Himalayas thin air and the jet stream, then the Quick Vent. A leg has at most two twists (kite beat / geese / reversing wind / lightning) and a storm leg has none besides the storm.
+
 ## The world
 
 A map of 4 regions with 6 Flights each. A Flight opens when the one before it is completed; the next region opens at 12 of 18 stars in the current one. The map shows the stars earned per Flight, so replaying for 3 stars is obvious.

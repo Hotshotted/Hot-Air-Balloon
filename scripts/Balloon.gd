@@ -20,6 +20,9 @@ var _t := 0.0
 
 var flame: Node2D       # the burner flame: its own tiny node, redrawn only while it burns
 var _flame_on := false
+var anchor_left := 0.0   # Anchor (Sahara): seconds of holding position left
+var vent_left := 0.0     # Quick Vent (Himalayas): seconds of fast descent left
+var ceiling_y := -100000.0   # the balloon cannot rise above this (a leg whose goal is not met yet)
 var body_draws := 0     # times the body has been drawn (only on a cosmetics change or a fresh leg)
 var env_id := 0        # equipped cosmetics (purely visual)
 var basket_id := 0
@@ -43,6 +46,9 @@ func reset() -> void:
 	rise = 0.0
 	vx = 0.0
 	heat = 0.0
+	anchor_left = 0.0
+	vent_left = 0.0
+	ceiling_y = -100000.0
 	burning = false
 	on_ground = true
 	sway = 0.0
@@ -59,18 +65,31 @@ func reset() -> void:
 ## `lift`: extra rise from a thermal (px/s); `climb_mult`: share of the climb speed the burner keeps (thin air).
 func step(dt: float, hold: bool, fuel_left: bool, wind: float, lift: float = 0.0, climb_mult: float = 1.0) -> void:
 	_t += dt
-	burning = hold and fuel_left
+	var anchored := anchor_left > 0.0
+	if anchored:
+		anchor_left = maxf(anchor_left - dt, 0.0)
+	var venting := vent_left > 0.0
+	if venting:
+		vent_left = maxf(vent_left - dt, 0.0)
+	burning = hold and fuel_left and not anchored and not venting
 	heat = move_toward(heat, 1.0 if burning else 0.0, (Tuning.heat_rate if burning else Tuning.cool_rate) * dt)
 	var target := lerpf(-Tuning.sink_speed, Tuning.climb_speed * climb_mult, heat) + lift
-	rise += (target - rise) * (1.0 - exp(-Tuning.buoyancy_lag * dt))
+	if venting:   # Quick Vent: dump the hot air, much faster descent
+		target = -Tuning.sink_speed * Tuning.vent_mult
+	if anchored:   # Anchor: hold position, neither rising nor sinking
+		target = 0.0
+	rise += (target - rise) * (1.0 - exp(-(Tuning.buoyancy_lag * (3.0 if anchored else (2.0 if venting else 1.0))) * dt))
 	var y := position.y - rise * dt
+	if y < ceiling_y:
+		y = ceiling_y
+		rise = minf(rise, 0.0)
 	var fy := floor_y()
 	on_ground = y >= fy
 	if on_ground:
 		y = fy
 		rise = maxf(rise, 0.0)
 	# Sideways: tethered on the ground, otherwise follows the wind with a lag.
-	vx += ((0.0 if on_ground else wind) - vx) * (1.0 - exp(-(8.0 if on_ground else Tuning.wind_follow) * dt))
+	vx += ((0.0 if (on_ground or anchored) else wind) - vx) * (1.0 - exp(-(8.0 if on_ground else (8.0 if anchored else Tuning.wind_follow)) * dt))
 	var x := position.x + vx * dt
 	var half := WIDTH * 0.5 * s()
 	if Tuning.edge_wrap:
@@ -92,6 +111,17 @@ func step(dt: float, hold: bool, fuel_left: bool, wind: float, lift: float = 0.0
 	if on or _flame_on:   # (the node's own transform moves the whole balloon: no redraw needed)
 		flame.queue_redraw()
 	_flame_on = on
+
+## Player tools. Sandbag: an instant climb burst. Anchor: hold position. Quick Vent: a fast descent.
+func use_sandbag() -> void:
+	rise = maxf(rise, 0.0) + Tuning.sandbag_boost
+	on_ground = false
+
+func use_anchor() -> void:
+	anchor_left = Tuning.anchor_seconds
+
+func use_vent() -> void:
+	vent_left = Tuning.vent_seconds
 
 ## Centre of hit circle i, and its radius (scaled and made forgiving).
 func hit_pos(i: int) -> Vector2:

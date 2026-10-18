@@ -103,6 +103,46 @@ var leg_coins := 10.0
 var coin_value := 5.0
 var propane_coins := 0.3
 
+# ---------- Leg goals ----------
+## Rising Storm: it rises from below at storm_speed (+ storm_speed_per_leg for each leg of the Flight), starting
+## storm_start_delay seconds after lift-off. Star Collect: this many stars per leg.
+var storm_speed := 40.0
+var storm_speed_per_leg := 2.0
+var storm_start_delay := 2.0
+var stars_per_leg := 4.0
+## Precision Landing: the airship drifts at airship_speed (px/s); its deck is +-airship_deck_half wide; the balloon may
+## touch down at up to land_speed (px/s of descent), faster is a hard landing.
+var airship_speed := 45.0
+var airship_deck_half := 130.0
+var land_speed := 170.0
+## Delivery: a mooring platform picks up / takes the mail when the balloon is within these distances of it.
+var dock_half_w := 100.0
+var dock_half_h := 70.0
+
+# ---------- Player tools (unlocked by region) ----------
+## Sandbag (Alps): drop it for an instant climb burst of sandbag_boost px/s. Anchor (Sahara): hold position for
+## anchor_seconds. Quick Vent (Himalayas): descend vent_mult times faster for vent_seconds. Charges are per leg.
+var sandbag_charges := 2.0
+var sandbag_boost := 300.0
+var anchor_charges := 1.0
+var anchor_seconds := 2.0
+var vent_charges := 2.0
+var vent_seconds := 1.6
+var vent_mult := 3.0
+
+# ---------- Rhythm and changing winds ----------
+## Kites dip on a beat: all the kites of a layer dip together every kite_beat_period seconds (by kite_dip of the free height).
+## Lightning: every lightning_period seconds a column of the sky flashes (the warning, lightning_warning seconds), then
+## is struck (lightning_strike seconds); the column is lightning_width wide.
+## Reversing layers flip their wind every reverse_period seconds, with a visible countdown.
+var kite_beat_period := 2.4
+var kite_dip := 0.85
+var lightning_period := 6.0
+var lightning_warning := 1.1
+var lightning_strike := 0.3
+var lightning_width := 110.0
+var reverse_period := 8.0
+
 # ---------- Daily Flight ----------
 ## The Daily Flight (seeded by the date): coins for the first completion of the day, plus a bonus per day of the
 ## streak (up to daily_streak_cap days). Its difficulty is the region's mid Flight plus daily_level_bonus.

@@ -44,7 +44,11 @@ var snap_fuel := 0.0                # the state at the start of the current leg 
 var snap_coins := 0
 var snap_picked := 0
 var snap_score := 0
-var eff_add := 0.0                  # the Daily Flight is a little harder than its region's mid Flight
+var eff_add := 0.0
+var recipe: LegRecipe               # this leg's goal and twists
+var tool_charges := PackedInt32Array([0, 0, 0])   # sandbag, anchor, quick vent: charges left this leg
+var tool_avail: Array = []         # the tools this Flight offers
+var _goal_key := -1                  # the Daily Flight is a little harder than its region's mid Flight
 var _air_pct := -1
 static var _warmed := false         # the pre-warm only ever runs once per page load
 
@@ -278,8 +282,14 @@ func start_flight(id: int) -> void:
 	_begin_leg()
 
 func _begin_leg() -> void:
-	lanes.setup(_eff(leg), false, Flights.leg_seed(flight_seed, leg), flight_region)
+	recipe = Flights.leg_recipe(flight_id, leg, Flights.leg_seed(flight_seed, leg))
+	lanes.setup(_eff(leg), false, Flights.leg_seed(flight_seed, leg), flight_region, recipe)
 	lanes.visible = true
+	_goal_key = -1
+	tool_avail = Flights.tools_for(flight_region, flight_index)
+	tool_charges[0] = int(Tuning.sandbag_charges)
+	tool_charges[1] = int(Tuning.anchor_charges)
+	tool_charges[2] = int(Tuning.vent_charges)
 	lanes.clear_fx()
 	balloon.reset()
 	balloon.visible = true
@@ -296,7 +306,13 @@ func _begin_leg() -> void:
 	_air_pct = -1
 	_prog_key = -1
 	_update_progress()
-	hud.show_banner("LEG %d / %d" % [leg + 1, int(Tuning.legs_per_flight)], 1.0)
+	hud.show_banner("LEG %d / %d\n%s" % [leg + 1, int(Tuning.legs_per_flight), Flights.GOAL_HINTS[recipe.goal]], 1.6)
+	_sync_tools()
+	for t in tool_avail:   # a new tool gets a one-line intro the first time it is on offer
+		if not Save.tool_seen(t):
+			Save.mark_tool_seen(t)
+			hud.show_hint(_tool_intro(t), 5.0)
+			break
 	screen = SCREEN_PLAY
 
 func _update_progress() -> void:
@@ -426,6 +442,12 @@ func _region_news() -> String:
 	var r := Save.take_new_region()
 	return "\nNEW REGION UNLOCKED: %s!" % Regions.NAMES[r] if r >= 0 else ""
 
+func _on_tool_button(pos: Vector2) -> bool:
+	for i in 3:
+		if tool_avail.has(i) and Hud.TOOL_RECTS[i].has_point(pos):
+			return true
+	return false
+
 func _holding() -> bool:
 	if burn_override >= 0:
 		return burn_override == 1
@@ -434,7 +456,7 @@ func _holding() -> bool:
 	if Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_UP):
 		return true
 	var mouse := get_viewport().get_mouse_position()
-	return Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not TunePanel.button_hit(mouse) and not (hud.boost_btn.visible and hud.boost_btn.get_global_rect().has_point(mouse))
+	return Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and not TunePanel.button_hit(mouse) and not (hud.boost_btn.visible and hud.boost_btn.get_global_rect().has_point(mouse)) and not _on_tool_button(mouse)
 
 ## One simulation step of `dt` seconds.
 func sim(dt: float) -> void:
@@ -455,6 +477,11 @@ func sim(dt: float) -> void:
 
 func _play(dt: float) -> void:
 	lanes.focus_lane = lanes.lane_of(balloon.position.y)
+	var goal := recipe.goal
+	# Until the leg's goal is met the balloon cannot go through the top; a landing leg lets it fly higher.
+	var blocked := (goal == Flights.STARS and lanes.stars_left() > 0) or (goal == Flights.DELIVERY and lanes.mail_state < 2)
+	balloon.ceiling_y = Lanes.CEILING_Y if goal == Flights.LANDING else (Lanes.GOAL_Y + 14.0 if blocked else -100000.0)
+	lanes.storm_go = leg_started and leg_time >= Tuning.storm_start_delay
 	var climb_mult := lanes.climb_mult_at(balloon.position.y)
 	balloon.step(dt, _holding(), fuel > 0.0, lanes.wind_at(balloon.position.y), lanes.thermal_lift(balloon.position.x), climb_mult)
 	if lanes.thin_air:
@@ -480,12 +507,105 @@ func _play(dt: float) -> void:
 	hud.set_fuel(fuel / Tuning.propane_start)
 	_update_progress()
 	_update_boost_button()
+	_update_goal()
+	var landed := 0
+	if goal == Flights.LANDING:
+		landed = lanes.ship_contact(balloon)
 	if not DebugFlags.god and lanes.hits(balloon):
 		_crash(lanes.last_hit_kind)
-	elif balloon.position.y <= Lanes.GOAL_Y:
+	elif not DebugFlags.god and lanes.lightning_hits(balloon):
+		_fail("Struck by lightning")
+	elif not DebugFlags.god and lanes.storm_hits(balloon):
+		_fail("Caught by the storm")
+	elif landed == 1:
+		_clear_leg()
+	elif landed == 2:
+		_fail("Hard landing on the airship")
+	elif goal != Flights.LANDING and not blocked and balloon.position.y <= Lanes.GOAL_Y:
 		_clear_leg()
 	elif fuel <= 0.0 and balloon.on_ground:
 		_fail("Out of propane: stranded on the ground")
+
+## Goal progress: collect stars, pick up and deliver the mail; and the goal line of the HUD.
+func _update_goal() -> void:
+	match recipe.goal:
+		Flights.STARS:
+			var got := lanes.collect_stars(balloon)
+			if got > 0:
+				hud.show_banner("STAR!  %d LEFT" % lanes.stars_left() if lanes.stars_left() > 0 else "ALL STARS! GO UP!", 0.8)
+			var key := lanes.stars_left()
+			if key != _goal_key:
+				_goal_key = key
+				hud.set_goal_text("Stars %d / %d: collect them all, then climb" % [lanes.gs_count - key, lanes.gs_count])
+		Flights.DELIVERY:
+			if lanes.mail_state == 0 and lanes.at_dock(balloon, 0):
+				lanes.mail_state = 1
+				hud.show_banner("MAIL PICKED UP!", 1.0)
+			elif lanes.mail_state == 1 and lanes.at_dock(balloon, 1):
+				lanes.mail_state = 2
+				hud.show_banner("DELIVERED! GO UP!", 1.0)
+			if lanes.mail_state != _goal_key:
+				_goal_key = lanes.mail_state
+				hud.set_goal_text(["Mail: pick it up at the GREEN flag", "Mail on board: drop it at the RED flag", "Mail delivered: climb to the top"][lanes.mail_state])
+		Flights.STORM:
+			if _goal_key != 1:
+				_goal_key = 1
+				hud.set_goal_text("A storm is rising from below: keep climbing")
+		Flights.LANDING:
+			if _goal_key != 1:
+				_goal_key = 1
+				hud.set_goal_text("Land gently on the airship's deck")
+		_:
+			if _goal_key != 1:
+				_goal_key = 1
+				hud.set_goal_text("Climb to the top" + ("   (" + recipe.describe().substr(7) + ")" if recipe.twist_count() > 0 else ""))
+
+# ---- player tools ----
+
+func _tool_intro(t: int) -> String:
+	match t:
+		0:
+			return "NEW TOOL: SANDBAG. Tap it to drop a sandbag for an instant climb burst (%d per leg)." % int(Tuning.sandbag_charges)
+		1:
+			return "NEW TOOL: ANCHOR. Tap it to hold your position for %d seconds (%d per leg)." % [int(Tuning.anchor_seconds), int(Tuning.anchor_charges)]
+	return "NEW TOOL: QUICK VENT. Tap it to dump hot air for a much faster descent (%d per leg)." % int(Tuning.vent_charges)
+
+func _sync_tools() -> void:
+	for i in 3:
+		hud.set_tool(i, tool_avail.has(i), tool_charges[i])
+
+## Use tool i (0 sandbag, 1 anchor, 2 quick vent): only while flying, if it is on offer and has a charge left.
+func use_tool(i: int) -> bool:
+	if screen != SCREEN_PLAY or hud.ad_active or not tool_avail.has(i) or tool_charges[i] <= 0:
+		return false
+	tool_charges[i] -= 1
+	match i:
+		0:
+			balloon.use_sandbag()
+			lanes.burst(balloon.position + Vector2(0, 70), Color(0.85, 0.7, 0.4), 8, 240.0)
+		1:
+			balloon.use_anchor()
+		2:
+			balloon.use_vent()
+			lanes.burst(balloon.position + Vector2(0, -50), Color(1, 1, 1), 8, 200.0)
+	_sync_tools()
+	return true
+
+## Touches on the tool buttons (handled here so a second finger works while the first holds the burner).
+func _input(event: InputEvent) -> void:
+	if _warming or screen != SCREEN_PLAY:
+		return
+	var pos := Vector2(-1, -1)
+	if event is InputEventScreenTouch and event.pressed:
+		pos = event.position
+	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and event.device != InputEvent.DEVICE_ID_EMULATION:
+		pos = event.position   # (a mouse click; the emulated mouse of a touch is skipped: the touch itself is handled above)
+	if pos.x < 0.0:
+		return
+	for i in 3:
+		if tool_avail.has(i) and Hud.TOOL_RECTS[i].has_point(pos):
+			use_tool(i)
+			return
 
 # ---------------------------------------------------------------------------------------------------------
 # Frame time: the simulation can never run ahead of the clock
