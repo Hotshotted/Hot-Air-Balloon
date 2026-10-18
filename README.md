@@ -7,8 +7,9 @@ A Frogger-style hot air balloon game (working title). Side view, low-poly shapes
 - **Hold** (finger / mouse / Space) to fire the burner and rise. **Release** to sink slowly. The balloon has buoyancy lag: the air takes a moment to heat and cool.
 - The sky is split into horizontal wind layers. Each blows left or right at its own speed (drifting particles, streamers and chevrons show it) and the balloon drifts with the layer it is in. The screen edges wrap.
 - Every layer carries hazards that travel with its wind: birds, kites, other balloons, drones. Time your climbs and hold in the gaps.
-- Reach the goal line at the top to clear the level: more layers, faster winds, denser hazards. Propane is limited; green tanks float in some layers.
-- Score = levels cleared x 100 + a speed bonus for every second under par. Touching a hazard, or landing on an empty tank, ends the attempt.
+- **Flights:** each Flight is a fixed chain of 5 legs generated from a seed (the same every time). One tank of propane for the whole Flight: what is left after a leg carries into the next. Failing a leg ends the Flight.
+- **Stars per Flight:** 1 for finishing, 1 for finishing with enough propane left (the gold tick on the gauge), 1 for collecting enough of the floating gold coins. Progress toward each is shown under the gauge.
+- **Coins** (currency): per leg cleared, per floating coin collected, and a bonus for leftover propane at the end. Score = legs x 100 + a speed bonus for every second under par.
 
 ## Debug flags (URL query)
 

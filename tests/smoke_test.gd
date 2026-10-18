@@ -8,7 +8,9 @@ extends SceneTree
 ##   4. hazards: touching one ends the attempt, god mode ignores it, gaps are left alone
 ##   5. propane: drains only while burning, an empty tank kills the burner and a landing ends the run,
 ##      pickups refill (capped) with a pooled burst
-##   6. levels: reaching the top scores level points + speed bonus and starts a harder level
+##   6. Flights: five legs on ONE tank (propane carries over), leg score, a failed leg ends the Flight (coins
+##      kept), finishing awards 1-3 stars and coins, same seed = same Flight, floating coins, stars progress HUD
+##   6b. save: versioned, round trip, migration of old files, unlocks (Flight chain, region star threshold)
 ##   7. fairness of generated levels (hundreds of layouts): clear start / goal layers, gaps wider than the
 ##      balloon, layers / winds / density within limits and growing with the level
 ##   8. a crash ends the run; a tap restarts it IN PLACE (three runs in a row), creating no new nodes or resources
@@ -18,11 +20,13 @@ extends SceneTree
 
 var failures: Array[String] = []
 var tn: Node
+var sv: Node
 # Loaded at run time (after the autoloads exist): naming these classes in this file would compile them too early.
 var MainS: GDScript
 var LanesS: GDScript
 var BalloonS: GDScript
 var TuneS: GDScript
+var FlightsS: GDScript
 
 func check(ok: bool, what: String) -> void:
 	print(("  ok   " if ok else "  FAIL ") + what)
@@ -50,9 +54,8 @@ func snap() -> Dictionary:
 func same(a: Dictionary, b: Dictionary) -> bool:
 	return a["nodes"] == b["nodes"] and a["node_count"] == b["node_count"] and a["resources"] == b["resources"]
 
-func make_main(persist: bool = false) -> Node:
+func make_main() -> Node:
 	var m: Node = load("res://scenes/main.tscn").instantiate()
-	m.persist = persist
 	root.add_child(m)
 	return m
 
@@ -78,10 +81,14 @@ func tap(m: Node, pos: Vector2) -> void:
 
 func _initialize() -> void:
 	tn = root.get_node("Tuning")
+	sv = root.get_node("Save")
+	sv.persist = false
+	sv.reset_all()
 	MainS = load("res://scripts/Main.gd")
 	LanesS = load("res://scripts/Lanes.gd")
 	BalloonS = load("res://scripts/Balloon.gd")
 	TuneS = load("res://scripts/TunePanel.gd")
+	FlightsS = load("res://scripts/Flights.gd")
 	await _run()
 	if failures.is_empty():
 		print("SMOKE TEST PASSED")
@@ -120,7 +127,7 @@ func _run() -> void:
 	var warm_s := (Time.get_ticks_msec() - t0) / 1000.0
 	check(not m._warming, "pre-warm finishes")
 	check(warm_s >= tn.prewarm_min_seconds, "pre-warm lasts at least prewarm_min_seconds (%.1f s)" % warm_s)
-	check(not m.hud.splash.visible and m.hud.title.visible and m.screen == MainS.SCREEN_MENU, "menu after the splash")
+	check(not m.hud.splash.visible and m.hud.menu_p.visible and m.screen == MainS.SCREEN_MENU, "menu after the splash")
 	check(not m.lanes.showcase and m.lanes.n_lanes == 5, "real level 1 after warm-up (5 layers)")
 	check(m.balloon.heat == 0.0, "balloon cold again")
 	var fx_live := 0
@@ -132,7 +139,7 @@ func _run() -> void:
 
 	# ---- 3. balloon ----
 	print("3. balloon: buoyancy, sink, ground, wind, edges")
-	m.restart()
+	m.start_flight(0)
 	clear_sky(m)
 	var b = m.balloon
 	check(b.on_ground and is_equal_approx(b.position.y, b.floor_y()), "starts resting on the ground")
@@ -158,7 +165,7 @@ func _run() -> void:
 	check(absf(b.vx) < 1.0, "tethered on the ground: no drift")
 	# Wind: hold the balloon at a layer's height.
 	var lanes = m.lanes
-	m.restart()
+	m.start_flight(0)
 	clear_sky(m)
 	b = m.balloon
 	lanes.lane_wind[2] = 150.0
@@ -199,7 +206,7 @@ func _run() -> void:
 
 	# ---- 4. hazards ----
 	print("4. hazards")
-	m.restart()
+	m.start_flight(0)
 	b = m.balloon
 	lanes = m.lanes
 	var hl := -1
@@ -210,7 +217,7 @@ func _run() -> void:
 	check(hl >= 1, "level 1 has a hazard layer")
 	var kinds_hit := {}
 	for k in 4:
-		m.restart()
+		m.start_flight(0)
 		clear_sky(m)
 		b = m.balloon
 		lanes = m.lanes
@@ -231,14 +238,14 @@ func _run() -> void:
 		m.sim(1.0 / 60.0)
 		kinds_hit[k] = m.screen == MainS.SCREEN_DEAD and m.last_reason == "Crashed into %s" % LanesS.KIND_NAME[k]
 	check(kinds_hit.values().all(func(v): return v), "touching a bird / kite / balloon / drone ends the attempt with its name")
-	check(not m.balloon.visible and m.hud.over_header.visible, "crash shows the game-over screen")
+	check(not m.balloon.visible and m.hud.dead_p.visible and m.hud.dead_text.text.contains("Crashed into"), "a crash ends the Flight and shows the failed screen")
 	var spark := 0
 	for f in LanesS.FX_MAX:
 		if m.lanes.fx_life[f] > 0.0:
 			spark += 1
 	check(spark > 0, "crash bursts sparks (pooled)")
 	DebugFlags.parse(["god"])
-	m.restart()
+	m.start_flight(0)
 	clear_sky(m)
 	lanes = m.lanes
 	lanes.lane_kind[2] = 0
@@ -254,7 +261,7 @@ func _run() -> void:
 	check(m.screen == MainS.SCREEN_PLAY, "?god: hazards cannot hurt")
 	DebugFlags.parse([])
 	# Hazards move with their layer's wind (times the kind's speed) and loop around the screen.
-	m.restart()
+	m.start_flight(0)
 	lanes = m.lanes
 	var ml := -1
 	for i in lanes.n_lanes:
@@ -277,7 +284,7 @@ func _run() -> void:
 
 	# ---- 5. propane ----
 	print("5. propane")
-	m.restart()
+	m.start_flight(0)
 	clear_sky(m)
 	b = m.balloon
 	check(is_equal_approx(m.fuel, tn.propane_start), "run starts with a full tank")
@@ -285,7 +292,7 @@ func _run() -> void:
 	check(is_equal_approx(m.fuel, tn.propane_start), "no burn, no drain")
 	step(m, 1.0, 1)
 	check(absf(m.fuel - (tn.propane_start - tn.burn_rate)) < 0.5, "burner drains burn_rate per second (%.1f)" % m.fuel)
-	m.fuel = 5.0
+	m.fuel = 2.0
 	b.position.y = LanesS.BAND_BOTTOM - 2.5 * m.lanes.lane_h
 	step(m, 1.5, 1)
 	check(m.fuel == 0.0 and not b.burning, "empty tank: the burner dies")
@@ -293,7 +300,7 @@ func _run() -> void:
 	step(m, 60.0, 1)
 	check(m.screen == MainS.SCREEN_DEAD and m.last_reason.begins_with("Out of propane"), "landing with an empty tank ends the run")
 	# Pickups
-	m.restart()
+	m.start_flight(0)
 	clear_sky(m)
 	lanes = m.lanes
 	b = m.balloon
@@ -319,43 +326,184 @@ func _run() -> void:
 	step(m, 0.05, 0)
 	check(m.fuel == tn.propane_start, "refills never exceed the tank")
 
-	# ---- 6. levels ----
-	print("6. levels")
-	m.restart()
+	# ---- 6. Flights ----
+	print("6. Flights")
+	m.start_flight(0)
 	clear_sky(m)
 	lanes = m.lanes
 	b = m.balloon
-	check(m.level == 1 and m.score == 0 and lanes.n_lanes == 5, "level 1: 5 layers")
-	var w1: float = lanes.wind_for(1)
+	check(m.leg == 0 and m.score == 0 and lanes.n_lanes == 5, "Flight 1, leg 1: 5 layers")
+	check(is_equal_approx(m.fuel, tn.propane_start), "a Flight starts with a fresh tank")
+	check(m.hud.level_label.text.contains("LEG 1/5"), "HUD shows the leg")
+	var w1: float = lanes.wind_for(1.0)
 	m.fuel = 60.0
 	b.position = Vector2(540.0, LanesS.GOAL_Y + 4.0)
 	b.on_ground = false
 	b.rise = 250.0
 	b.heat = 1.0
-	m.level_time = 0.0
+	m.leg_time = 0.0
+	m.leg_started = true
 	step(m, 0.1, 1)
-	check(m.screen == MainS.SCREEN_CLEAR and m.level == 2, "reaching the top clears the level")
+	check(m.screen == MainS.SCREEN_CLEAR and m.leg == 1, "reaching the top clears the leg")
 	var par: float = tn.par_base + tn.par_per_layer * 5.0
 	var expect := roundi(tn.level_points) + roundi((par - 0.02) * tn.speed_bonus_per_s)
-	check(absi(m.score - expect) <= 12, "score = level points + speed bonus (%d, expected ~%d)" % [m.score, expect])
+	check(absi(m.score - expect) <= 12, "score = leg points + speed bonus (%d, expected ~%d)" % [m.score, expect])
+	check(m.flight_coins == roundi(tn.leg_coins), "a cleared leg pays its coins")
 	check(m.hud.banner.visible and m.hud.banner.text.contains("CLEARED"), "cleared banner")
 	var fuel_before: float = m.fuel
 	step(m, 1.5, 0)
-	check(m.screen == MainS.SCREEN_PLAY and m.balloon.on_ground and m.balloon.visible, "next level starts on the ground")
-	check(m.lanes.n_lanes == 6, "level 2: more layers (%d)" % m.lanes.n_lanes)
-	check(m.lanes.wind_for(2) > w1, "...faster winds")
-	check(m.fuel > fuel_before - 0.01 and m.fuel <= tn.propane_start, "level refill (%.0f)" % m.fuel)
-	check(m.hud.level_label.text == "LEVEL 2", "HUD shows the level")
-	# A slow level pays no speed bonus, never negative.
+	check(m.screen == MainS.SCREEN_PLAY and m.balloon.on_ground and m.balloon.visible, "next leg starts on the ground")
+	check(absf(m.fuel - fuel_before) < 0.01, "propane carries over into the next leg (%.1f)" % m.fuel)
+	check(m.leg == 1 and m.hud.level_label.text.contains("LEG 2/5"), "leg 2 of 5")
+	check(m.lanes.wind_for(1.5) > w1, "winds get faster leg by leg")
+	# A slow leg pays no speed bonus, never negative.
 	clear_sky(m)
 	m.balloon.position = Vector2(540.0, LanesS.GOAL_Y + 4.0)
 	m.balloon.on_ground = false
 	m.balloon.rise = 250.0
 	m.balloon.heat = 1.0
-	m.level_time = 500.0
+	m.leg_time = 500.0
+	m.leg_started = true
 	var s_before: int = m.score
 	step(m, 0.05, 1)
-	check(m.score - s_before == roundi(tn.level_points) and m.last_bonus == 0, "no speed bonus for a slow level")
+	check(m.score - s_before == roundi(tn.level_points) and m.last_bonus == 0, "no speed bonus for a slow leg")
+	check(m.leg == 2, "leg 3 reached")
+	# The clock only runs once the balloon has left the ground.
+	step(m, 1.5, 0)
+	m.start_flight(0)
+	clear_sky(m)
+	step(m, 1.0, 0)
+	check(m.leg_time == 0.0 and not m.leg_started, "the leg clock waits on the ground")
+	step(m, 1.0, 1)
+	check(m.leg_started and m.leg_time > 0.0, "...and starts when the balloon lifts off")
+	# Failing a leg ends the whole Flight; coins earned so far are kept.
+	m.start_flight(0)
+	clear_sky(m)
+	var coins0: int = sv.coins
+	m.flight_coins = 33
+	m.fuel = 0.0
+	step(m, 60.0, 1)
+	check(m.screen == MainS.SCREEN_DEAD and m.hud.dead_p.visible, "a failed leg ends the Flight")
+	check(sv.coins == coins0 + 33 and sv.stars_of(0) == 0, "coins earned are kept, no stars for a failed Flight")
+	check(m.hud.dead_text.text.contains("Leg 1 of 5") and m.hud.dead_text.text.contains("33"), "failed screen names the leg and the coins kept")
+	# A whole Flight: five legs on one tank.
+	sv.reset_all()
+	m.start_flight(0)
+	for l in 5:
+		clear_sky(m)
+		m.fuel = m.fuel
+		m.balloon.position = Vector2(540.0, LanesS.GOAL_Y + 4.0)
+		m.balloon.on_ground = false
+		m.balloon.rise = 250.0
+		m.balloon.heat = 1.0
+		m.leg_started = true
+		if l == 3:
+			m.coins_picked = 9
+			m.fuel = 45.0
+		step(m, 0.05, 1)
+		if l < 4:
+			step(m, 1.5, 0)
+	check(m.screen == MainS.SCREEN_RESULT and m.hud.result_p.visible, "five cleared legs finish the Flight")
+	check(m.last_stars == 3 and sv.stars_of(0) == 3, "finished with enough propane and coins: 3 stars")
+	check(m.hud.result_lit[0] and m.hud.result_lit[1] and m.hud.result_lit[2], "result screen lights all three stars")
+	var expect_coins: int = 5 * roundi(tn.leg_coins) + roundi(m.fuel * tn.propane_coins)
+	check(m.flight_coins == expect_coins and sv.coins == expect_coins, "coins = legs + propane bonus (%d)" % sv.coins)
+	check(sv.best_score_of(0) == m.score and m.score > 500, "best score saved (%d)" % m.score)
+	check(sv.flight_unlocked(1), "completing a Flight opens the next")
+	check(FlightsS.stars_for(false, 99.0, 99) == 0, "no stars unless completed")
+	check(FlightsS.stars_for(true, 0.0, 0) == 1, "1 star: completed")
+	check(FlightsS.stars_for(true, FlightsS.propane_target(), 0) == 2, "2 stars: completed + propane")
+	check(FlightsS.stars_for(true, 0.0, FlightsS.coin_target()) == 2, "2 stars: completed + coins")
+	check(FlightsS.stars_for(true, FlightsS.propane_target(), FlightsS.coin_target()) == 3, "3 stars: both")
+	check(FlightsS.stars_for(true, FlightsS.propane_target() - 0.1, FlightsS.coin_target() - 1) == 1, "just under both targets: 1 star")
+	check(FlightsS.coin_total() == 15 and FlightsS.coin_target() == 9, "15 floating coins per Flight, 9 needed")
+	# Same seed = same Flight.
+	var sig_a := []
+	var sig_b := []
+	for pass_i in 2:
+		m.start_flight(7)
+		for l in 5:
+			m.lanes.setup(FlightsS.eff_level(1, 1, l), false, FlightsS.leg_seed(FlightsS.seed_of(7), l))
+			var sig := [m.lanes.n_lanes, Array(m.lanes.hz_x.slice(0, 20)), Array(m.lanes.lane_wind.slice(0, 9)), Array(m.lanes.cn_x.slice(0, 9)), Array(m.lanes.pk_on.slice(0, 9))]
+			(sig_a if pass_i == 0 else sig_b).append(sig)
+	check(sig_a == sig_b, "a Flight is identical every time it is played (5 legs compared)")
+	m.lanes.setup(1.0, false, FlightsS.leg_seed(FlightsS.seed_of(8), 0))
+	var other: Array = Array(m.lanes.hz_x.slice(0, 20))
+	check(other != sig_a[0][1], "a different Flight has a different layout")
+	# Floating coins: coins_per_leg of them, in the gaps; collecting counts toward the third star.
+	var bad_coin := 0
+	for seed_i in 60:
+		m.lanes.setup(1.0 + float(seed_i % 12) * 0.7, false, 5000 + seed_i)
+		if m.lanes.coins_left() != int(tn.coins_per_leg):
+			bad_coin += 1
+		for i in m.lanes.n_lanes:
+			if m.lanes.cn_on[i] == 0:
+				continue
+			if m.lanes.pk_on[i] == 1 and absf(m.lanes.cn_x[i] - m.lanes.pk_x[i]) < 60.0:
+				bad_coin += 1
+			var k3: int = m.lanes.lane_kind[i]
+			for j in m.lanes.lane_count[i]:
+				var dx3 := absf(fposmod(m.lanes.cn_x[i] - m.lanes.hz_x[i * LanesS.MAX_PER_LANE + j] + LanesS.RING * 0.5, LanesS.RING) - LanesS.RING * 0.5)
+				if dx3 < float(LanesS.KIND_HX[k3]) * m.lanes.lane_scale[i] + 20.0:
+					bad_coin += 1
+	check(bad_coin == 0, "%d coins in every leg, sitting in gaps clear of hazards and propane" % int(tn.coins_per_leg))
+	m.start_flight(0)
+	clear_sky(m)
+	m.lanes.cn_on[1] = 1
+	m.lanes.lane_vel[1] = 0.0
+	m.lanes.lane_wind[1] = 0.0
+	m.balloon.position = Vector2(500.0, LanesS.BAND_BOTTOM - 1.5 * m.lanes.lane_h)
+	m.balloon.on_ground = false
+	m.lanes.cn_x[1] = 500.0
+	m.lanes.cn_y[1] = m.balloon.position.y
+	var fc0: int = m.flight_coins
+	step(m, 0.05, 0)
+	check(m.coins_picked == 1 and m.flight_coins == fc0 + roundi(tn.coin_value) and m.lanes.cn_on[1] == 0, "collecting a coin counts toward the star and pays")
+	check(m.hud.prog_labels[2].text == "coins 1 / 9", "HUD shows coin progress toward the third star")
+	check(m.hud.prog_labels[0].text == "0/5 legs", "HUD shows leg progress")
+	m.fuel = FlightsS.propane_target() + 5.0
+	step(m, 0.05, 0)
+	check(m.hud.prog_lit[1], "HUD lights the propane star while the tank is above the target")
+	m.fuel = FlightsS.propane_target() - 5.0
+	step(m, 0.05, 0)
+	check(not m.hud.prog_lit[1] and m.hud.prog_labels[1].text.begins_with("propane"), "...and dims it below")
+
+	# ---- 6b. save ----
+	print("6b. save")
+	sv.reset_all()
+	check(sv.coins == 0 and sv.total_stars() == 0 and sv.data["version"] == sv.VERSION, "fresh save")
+	check(sv.flight_unlocked(0) and not sv.flight_unlocked(1) and not sv.flight_unlocked(6), "only the first Flight is open")
+	sv.record_flight(0, 2, 500)
+	sv.record_flight(0, 1, 800)
+	check(sv.stars_of(0) == 2 and sv.best_score_of(0) == 800, "best stars and best score are kept separately")
+	check(sv.flight_unlocked(1) and not sv.flight_unlocked(2), "Flights open one by one")
+	for i in 6:
+		sv.data["stars"][i] = 2
+	check(sv.region_stars(0) == 12 and sv.region_unlocked(1) and sv.flight_unlocked(6), "12 stars in a region open the next region")
+	sv.data["stars"][5] = 1
+	check(not sv.region_unlocked(1) and not sv.flight_unlocked(6), "11 stars do not")
+	check(sv.suggested_flight() == 0 or sv.suggested_flight() <= 5, "suggested Flight stays in the open part")
+	sv.unlock_everything()
+	check(sv.flight_unlocked(23) and sv.region_unlocked(3), "debug unlock opens everything")
+	sv.three_star_everything()
+	check(sv.total_stars() == 72, "debug: 3 stars everywhere")
+	check(sv.spend(10) == false and sv.coins == 0, "cannot spend coins you do not have")
+	sv.add_coins(50)
+	check(sv.spend(20) and sv.coins == 30, "spending")
+	# Disk round trip and migration.
+	sv.persist = true
+	sv.reset_all()
+	sv.add_coins(77)
+	sv.record_flight(3, 3, 999)
+	sv.data = sv._defaults()
+	sv._load()
+	check(sv.coins == 77 and sv.stars_of(3) == 3 and sv.best_score_of(3) == 999, "save survives a round trip through the file")
+	var old: Dictionary = sv._migrate({"version": 0, "coins": 5, "unknown": 1, "stars": [1, 2]})
+	check(old["coins"] == 5 and old["stars"].size() == 24 and old["stars"][1] == 2 and old["version"] == sv.VERSION and not old.has("unknown"), "an older / shorter save is brought up to date")
+	var junk: Dictionary = sv._migrate({"coins": "lots", "stars": "no"})
+	check(junk["coins"] == 0 and junk["stars"].size() == 24, "wrong-typed fields fall back to defaults")
+	sv.reset_all()
+	sv.persist = false
 
 	# ---- 7. fairness ----
 	print("7. generated levels")
@@ -432,9 +580,9 @@ func _run() -> void:
 	m.burn_override = -1
 	var base := snap()
 	for run in 3:
-		m.restart()
-		check(m.screen == MainS.SCREEN_PLAY and m.score == 0 and m.level == 1 and m.balloon.on_ground, "run %d starts fresh" % (run + 1))
-		check(m.hud.level_label.text == "LEVEL 1" and not m.hud.over_header.visible, "run %d HUD reset" % (run + 1))
+		m.start_flight(0)
+		check(m.screen == MainS.SCREEN_PLAY and m.score == 0 and m.leg == 0 and m.balloon.on_ground, "run %d starts fresh" % (run + 1))
+		check(m.hud.level_label.text.contains("LEG 1/5") and not m.hud.dead_p.visible, "run %d HUD reset" % (run + 1))
 		m.burn_override = 1
 		await real_wait(1.0)
 		var s0: float = m.balloon.position.y
@@ -453,21 +601,29 @@ func _run() -> void:
 		await process_frame
 		await process_frame
 		check(m.screen == MainS.SCREEN_DEAD, "run %d ends on a crash" % (run + 1))
-		check(m.hud.over_header.visible and m.hud.over_header.text.begins_with("Crashed into") and m.hud.tap_label.text == "TAP TO RETRY", "run %d game-over UI" % (run + 1))
-		tap(m, Vector2(500, 900))
-		check(m.screen == MainS.SCREEN_DEAD, "run %d: a tap during the retry delay is ignored" % (run + 1))
-		m.dead_time = 1.0
-		tap(m, Vector2(500, 900))
-		check(m.screen == MainS.SCREEN_PLAY, "run %d: a tap restarts" % (run + 1))
+		check(m.hud.dead_p.visible and m.hud.dead_text.text.contains("Crashed into"), "run %d failed screen" % (run + 1))
+		m.hud.again_pressed.emit()
+		check(m.screen == MainS.SCREEN_PLAY and not m.hud.dead_p.visible, "run %d: FLY AGAIN restarts the same Flight" % (run + 1))
 		await process_frame
 	var after := snap()
 	check(same(base, after), "no new nodes, materials or resources across 3 restarts (%d nodes, %d resources)" % [after["nodes"], after["resources"]])
 	m.burn_override = 0
-	# Best score
-	m.restart()
-	m.score = 340
-	m._end_run("test")
-	check(m.best >= 340 and m.hud.best_label.text.begins_with("best"), "best score recorded")
+	# Menu <-> Flight buttons.
+	m.hud.menu_pressed.emit()
+	check(m.screen == MainS.SCREEN_MENU and m.hud.menu_p.visible, "MENU returns to the Flight menu")
+	sv.reset_all()
+	m._select(0)
+	check(m.hud.fly_btn.disabled == false and m.hud.menu_name.text == "FLIGHT 1", "menu shows Flight 1")
+	m._select(2)
+	check(m.hud.fly_btn.disabled, "a locked Flight cannot be flown")
+	m._select(0)
+	m.hud.fly_pressed.emit()
+	check(m.screen == MainS.SCREEN_PLAY and m.flight_id == 0, "FLY starts the selected Flight")
+	var allocs_before := snap()
+	m.hud.menu_pressed.emit()
+	m.hud.fly_pressed.emit()
+	await process_frame
+	check(same(allocs_before, snap()), "menu / fly cycle allocates nothing")
 
 	# ---- 9. frame time ----
 	print("9. frame time")
@@ -512,14 +668,16 @@ func _run() -> void:
 	tp.close()
 	check(not tp.is_open and not paused, "closing resumes")
 	check(same(base2, snap()), "using the panel allocates nothing")
-	# A tap on the TUNE button is not a game tap.
-	TuneS._button_rect = Rect2(890, 20, 170, 76)
-	m._show_menu()
-	tap(m, Vector2(900, 40))
-	check(m.screen == MainS.SCREEN_MENU, "a tap on TUNE does not start the game")
-	tap(m, Vector2(500, 900))
-	check(m.screen == MainS.SCREEN_PLAY, "a tap elsewhere does")
+	# Debug buttons in the panel change the save.
+	sv.reset_all()
+	var sc := 0
+	tp.save_changed.connect(func(): sc += 1)
+	sv.add_coins(1000)
+	sv.three_star_everything()
+	sv.unlock_everything()
+	check(sv.coins == 1000 and sv.total_stars() == 72 and sv.region_unlocked(3), "?tune: coins, 3 stars everywhere, all regions")
+	sv.reset_all()
+	check(sv.coins == 0 and sv.total_stars() == 0, "?tune: reset save")
 	m.free()
-	TuneS._button_rect = Rect2()
 	DebugFlags.parse([])
 	await process_frame

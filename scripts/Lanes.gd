@@ -21,6 +21,7 @@ const PARTS_PER_LANE := 14
 const STREAMERS_PER_LANE := 2
 const STREAM_PTS := 7
 const FX_MAX := 48
+const MAX_COINS := MAX_LANES
 
 enum { BIRD, KITE, BALLOON, DRONE }
 const KIND_NAME := ["a bird", "a kite", "another balloon", "a drone"]
@@ -59,6 +60,10 @@ var pk_y := PackedFloat32Array()
 var pk_lane := PackedInt32Array()
 var pk_on := PackedByteArray()
 var pk_count := 0
+var cn_x := PackedFloat32Array()      # floating coins (they count toward a Flight's third star)
+var cn_y := PackedFloat32Array()
+var cn_on := PackedByteArray()
+var _order := PackedInt32Array()
 var pt_x := PackedFloat32Array()
 var pt_y := PackedFloat32Array()
 var pt_len := PackedFloat32Array()
@@ -73,7 +78,7 @@ var fx_life := PackedFloat32Array()
 var fx_col := PackedColorArray()
 var _fx_next := 0
 var last_hit_kind := 0
-var level := 1
+var level := 1.0
 var rng := RandomNumberGenerator.new()
 var showcase := false            # pre-warm: every shape on screen at once
 var _t := 0.0
@@ -112,6 +117,10 @@ func _ready() -> void:
 	pk_y.resize(MAX_LANES)
 	pk_lane.resize(MAX_LANES)
 	pk_on.resize(MAX_LANES)
+	cn_x.resize(MAX_COINS)
+	cn_y.resize(MAX_COINS)
+	cn_on.resize(MAX_COINS)
+	_order.resize(MAX_LANES)
 	pt_x.resize(MAX_LANES * PARTS_PER_LANE)
 	pt_y.resize(MAX_LANES * PARTS_PER_LANE)
 	pt_len.resize(MAX_LANES * PARTS_PER_LANE)
@@ -127,7 +136,7 @@ func _ready() -> void:
 	_stream.resize(STREAM_PTS)
 	_tail_pts.resize(5)
 	_build_shapes()
-	setup(1)
+	setup(1.0)
 
 static func _pair(pts: Array) -> Array:
 	var poly := PackedVector2Array(pts)
@@ -171,9 +180,6 @@ func _build_shapes() -> void:
 		_add_static([Vector2(tx - 26, GROUND_Y - 10), Vector2(tx, GROUND_Y - 84), Vector2(tx + 26, GROUND_Y - 10)], Color(0.16, 0.5, 0.26))
 	_add_static([Vector2(-60, 1700), Vector2(1140, 1700), Vector2(1140, 1960), Vector2(-60, 1960)], Color(0.36, 0.62, 0.3))
 	_add_static([Vector2(430, 1700), Vector2(650, 1700), Vector2(650, 1722), Vector2(430, 1722)], Color(0.55, 0.57, 0.62))
-	for c in [[190.0, 205.0, 1.0], [640.0, 195.0, 1.2], [420.0, 215.0, 0.6]]:
-		_add_static(_octagon(Vector2(c[0], c[1]), 70.0 * c[2], 34.0 * c[2]), Color(1, 1, 1))
-	_add_static(_octagon(Vector2(950, 205), 38.0, 38.0), Color(1.0, 0.88, 0.3))
 
 static func _octagon(c: Vector2, rx: float, ry: float) -> Array:
 	var pts: Array = []
@@ -190,27 +196,36 @@ func _add_static(pts: Array, fill: Color) -> void:
 # Level setup
 # ---------------------------------------------------------------------------------------------------------
 
-func layers_for(lv: int) -> int:
-	return clampi(int(Tuning.layers_base) + lv - 1, 3, mini(int(Tuning.layers_max), MAX_LANES))
+func layers_for(lv: float) -> int:
+	return clampi(int(Tuning.layers_base) + int(lv) - 1, 3, mini(int(Tuning.layers_max), MAX_LANES))
 
-func density_for(lv: int) -> float:
-	return minf(Tuning.hazard_density + Tuning.density_per_level * float(lv - 1), Tuning.density_max)
+func density_for(lv: float) -> float:
+	return minf(Tuning.hazard_density + Tuning.density_per_level * (lv - 1.0), Tuning.density_max)
 
-func wind_for(lv: int) -> float:
-	return minf(Tuning.wind_base + Tuning.wind_per_level * float(lv - 1), Tuning.wind_max)
+func wind_for(lv: float) -> float:
+	return minf(Tuning.wind_base + Tuning.wind_per_level * (lv - 1.0), Tuning.wind_max)
 
-## Lay out level `lv`: layers, winds, hazards, pickups and particles, all in place.
+## Lay out a leg of difficulty `lv`: layers, winds, hazards, pickups, coins and particles, all in place.
+## `seed_val` >= 0 fixes the whole layout (a Flight's legs are the same every time); -1 = random.
 ## `show` fills every slot with every kind (used by the start-up pre-warm).
-func setup(lv: int, show: bool = false) -> void:
+func setup(lv: float, show: bool = false, seed_val: int = -1) -> void:
+	if seed_val >= 0:
+		rng.seed = seed_val
 	level = lv
 	showcase = show
+	_t = 0.0
+	hz_x.fill(0.0)
+	hz_y.fill(0.0)
+	hz_phase.fill(0.0)
+	pk_x.fill(0.0)
+	cn_x.fill(0.0)
 	n_lanes = MAX_LANES if show else layers_for(lv)
 	lane_h = (BAND_BOTTOM - BAND_TOP) / float(n_lanes)
 	var balloon_w := Balloon.WIDTH * Tuning.balloon_scale
 	var min_gap := Tuning.min_gap_factor * balloon_w
 	var prev := 1.0 if rng.randf() < 0.5 else -1.0
-	var empty_chance := maxf(Tuning.empty_lane_chance - 0.04 * float(lv - 1), 0.0)
-	var kinds_open := 4 if show else mini(lv + 1, 4)
+	var empty_chance := maxf(Tuning.empty_lane_chance - 0.04 * (lv - 1.0), 0.0)
+	var kinds_open := 4 if show else mini(int(lv) + 1, 4)
 	var any_hazard := false
 	var prev_kind := -1
 	for i in MAX_LANES:
@@ -257,30 +272,47 @@ func setup(lv: int, show: bool = false) -> void:
 		lane_count[i] = cnt
 	# Pickups: some layers carry propane, floating in the middle of their widest gap.
 	pk_count = 0
+	for i in MAX_COINS:
+		cn_on[i] = 0
 	for i in range(1, n_lanes):
 		if not show and rng.randf() >= Tuning.propane_chance:
 			continue
-		pk_lane[i] = i
 		pk_on[i] = 1
 		pk_count += 1
-		var cnt2 := lane_count[i]
-		if cnt2 == 0:
+		if lane_count[i] == 0:
 			pk_x[i] = rng.randf_range(100.0, W - 100.0)
 		else:
-			var best_gap := -1.0
-			var best_x := 0.0
-			for j in cnt2:
-				var a := hz_x[i * MAX_PER_LANE + j]
-				var nearest := RING
-				for m in cnt2:
-					var d := fposmod(hz_x[i * MAX_PER_LANE + m] - a, RING)
-					if m != j and d > 0.0 and d < nearest:
-						nearest = d
-				if nearest > best_gap:
-					best_gap = nearest
-					best_x = a + nearest * 0.5
-			pk_x[i] = -MARGIN + fposmod(best_x + MARGIN, RING)
+			pk_x[i] = _gap_center(i, 0)
 		pk_y[i] = _lane_cy(i)
+	# Coins: coins_per_leg of them, preferably in layers with no propane (shuffled order, seeded).
+	var n_cand := n_lanes - 1
+	for k in n_cand:
+		_order[k] = k + 1
+	for k in range(n_cand - 1, 0, -1):
+		var r := rng.randi() % (k + 1)
+		var tmp := _order[k]
+		_order[k] = _order[r]
+		_order[r] = tmp
+	var want_coins := mini(int(Tuning.coins_per_leg), n_cand)
+	var placed := 0
+	for pass_i in 2:
+		for k in n_cand:
+			if placed >= want_coins:
+				break
+			var i2 := _order[k]
+			if cn_on[i2] == 1 or (pass_i == 0 and pk_on[i2] == 1):
+				continue
+			var cx := 0.0
+			if lane_count[i2] == 0:
+				cx = pk_x[i2] + 300.0 if pk_on[i2] == 1 else rng.randf_range(100.0, W - 100.0)
+			elif pk_on[i2] == 1:
+				cx = _gap_center(i2, 1) if lane_count[i2] >= 2 else pk_x[i2] + 300.0
+			else:
+				cx = _gap_center(i2, 0)
+			cn_x[i2] = -MARGIN + fposmod(cx + MARGIN, RING)
+			cn_y[i2] = _lane_cy(i2)
+			cn_on[i2] = 1
+			placed += 1
 	# Particles and streamers.
 	for i in n_lanes:
 		for j in PARTS_PER_LANE:
@@ -295,6 +327,29 @@ func setup(lv: int, show: bool = false) -> void:
 			st_ph[idx3] = rng.randf() * TAU
 	clear_fx()
 	update(0.0)
+
+## Centre (on the ring) of the rank-th widest gap between the hazards of a layer (rank 0 = widest).
+func _gap_center(i: int, rank: int) -> float:
+	var c := lane_count[i]
+	var used := 0
+	var best_j := 0
+	var best_gap := 0.0
+	for r in mini(rank, c - 1) + 1:
+		best_gap = -1.0
+		for j in c:
+			if used & (1 << j):
+				continue
+			var a := hz_x[i * MAX_PER_LANE + j]
+			var nearest := RING
+			for m in c:
+				var d := fposmod(hz_x[i * MAX_PER_LANE + m] - a, RING)
+				if m != j and d > 0.0 and d < nearest:
+					nearest = d
+			if nearest > best_gap:
+				best_gap = nearest
+				best_j = j
+		used |= 1 << best_j
+	return hz_x[i * MAX_PER_LANE + best_j] + best_gap * 0.5
 
 func _lane_cy(i: int) -> float:
 	return BAND_BOTTOM - (float(i) + 0.5) * lane_h
@@ -348,6 +403,15 @@ func update(dt: float) -> void:
 				px += RING
 			pk_x[i] = px
 			pk_y[i] = _lane_cy(i) + sin(_t * 2.0 + float(i)) * minf(lane_h * 0.18, 24.0)
+	for i in n_lanes:
+		if cn_on[i] == 1 or showcase:
+			var cx := cn_x[i] + lane_vel[i] * dt
+			if cx >= W + MARGIN:
+				cx -= RING
+			elif cx < -MARGIN:
+				cx += RING
+			cn_x[i] = cx
+			cn_y[i] = _lane_cy(i) + sin(_t * 2.3 + float(i) * 1.7) * minf(lane_h * 0.18, 24.0)
 	for f in FX_MAX:
 		if fx_life[f] > 0.0:
 			fx_life[f] -= dt
@@ -391,6 +455,26 @@ func collect(balloon: Balloon) -> int:
 				break
 	return got
 
+## Collect any floating coin the balloon touches; returns how many.
+func collect_coins(balloon: Balloon) -> int:
+	var got := 0
+	for i in n_lanes:
+		if cn_on[i] == 0:
+			continue
+		for c in 3:
+			if balloon.hit_pos(c).distance_to(Vector2(cn_x[i], cn_y[i])) < balloon.hit_radius(c) + 30.0:
+				cn_on[i] = 0
+				got += 1
+				burst(Vector2(cn_x[i], cn_y[i]), Color(1.0, 0.85, 0.2), 12, 300.0)
+				break
+	return got
+
+func coins_left() -> int:
+	var n := 0
+	for i in n_lanes:
+		n += cn_on[i]
+	return n
+
 ## A pooled burst of square sparks.
 func burst(p: Vector2, color: Color, n: int, speed: float) -> void:
 	for j in n:
@@ -430,6 +514,9 @@ func _draw() -> void:
 	for i in n_lanes:
 		if pk_on[i] == 1:
 			_draw_tank(pk_x[i], pk_y[i])
+	for i in n_lanes:
+		if cn_on[i] == 1:
+			_draw_coin(cn_x[i], cn_y[i], float(i))
 	for i in n_lanes:
 		var k := lane_kind[i]
 		for j in lane_count[i]:
@@ -503,6 +590,16 @@ func _draw_tank(x: float, y: float) -> void:
 	draw_rect(Rect2(-5, -25, 10, 9), FX_BLACK, false, w)
 	_fill(_tank, C_TANK, w)
 	_fill(_tank_band, Color.WHITE, w)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+func _draw_coin(x: float, y: float, ph: float) -> void:
+	var sq := 0.35 + 0.65 * absf(cos(_t * 3.0 + ph))
+	draw_set_transform(Vector2(x, y), 0.0, Vector2(sq, 1.0))
+	var pulse := 0.5 + 0.5 * sin(_t * 4.0 + ph)
+	draw_arc(Vector2.ZERO, 34.0 + 3.0 * pulse, 0.0, TAU, 20, Color(1.0, 0.95, 0.5, 0.4), 3.0)
+	draw_set_transform(Vector2(x, y), 0.0, Vector2(sq * 27.0, 27.0))
+	draw_colored_polygon(Ui.star_unit(), Color(1.0, 0.82, 0.15))
+	draw_polyline(Ui.star_closed(), FX_BLACK, 3.0 / 27.0)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 func _draw_hazard(k: int, x: float, y: float, dir: float, s: float, phase: float) -> void:

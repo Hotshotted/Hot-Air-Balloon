@@ -11,6 +11,8 @@ extends Node
 signal changed(property: String)
 ## Emitted by the Restart run button.
 signal restart_requested
+## Emitted after a save-data button changed the save (the game refreshes what it shows).
+signal save_changed
 
 ## [Tuning property, label, min, max, step]: the values tuned most.
 const ENTRIES := [
@@ -37,7 +39,14 @@ const ENTRIES := [
 	["burn_rate", "Propane burn (per s)", 1.0, 30.0, 0.5],
 	["propane_refill", "Pickup refill", 5.0, 100.0, 1.0],
 	["propane_chance", "Pickup chance per layer", 0.0, 1.0, 0.05],
-	["level_refill", "Refill on level clear", 0.0, 100.0, 1.0],
+	["leg_refill", "Refill on leg clear", 0.0, 100.0, 1.0],
+	["legs_per_flight", "Legs per Flight", 1.0, 8.0, 1.0],
+	["coins_per_leg", "Floating coins per leg", 0.0, 6.0, 1.0],
+	["star_propane_frac", "Star 2: propane left (frac)", 0.0, 1.0, 0.05],
+	["star_coin_frac", "Star 3: coins collected (frac)", 0.1, 1.0, 0.05],
+	["leg_coins", "Coins per leg cleared", 0.0, 50.0, 1.0],
+	["coin_value", "Coins per floating coin", 0.0, 30.0, 1.0],
+	["propane_coins", "Coins per propane left", 0.0, 2.0, 0.05],
 	["level_points", "Points per level", 0.0, 1000.0, 10.0],
 	["speed_bonus_per_s", "Speed bonus per s under par", 0.0, 100.0, 1.0],
 	["par_base", "Par time base (s)", 2.0, 40.0, 0.5],
@@ -171,12 +180,30 @@ func build() -> void:
 	buttons.add_child(reset)
 	buttons.add_child(copy)
 	column.add_child(buttons)
-	var restart_btn := _make_button("Restart run", 36)
+	var restart_btn := _make_button("Restart Flight", 36)
 	restart_btn.pressed.connect(func(): restart_requested.emit())
 	column.add_child(restart_btn)
+	var save_row := HBoxContainer.new()
+	save_row.add_theme_constant_override("separation", 20)
+	var add_coins := _make_button("Add 1000 coins", 32)
+	add_coins.pressed.connect(func(): Save.add_coins(1000); _out.text = "Coins: %s" % Tuning.fmt(float(Save.coins)); save_changed.emit())
+	var three := _make_button("3-star everything", 32)
+	three.pressed.connect(func(): Save.three_star_everything(); _out.text = "Every Flight has 3 stars."; save_changed.emit())
+	save_row.add_child(add_coins)
+	save_row.add_child(three)
+	column.add_child(save_row)
+	var save_row2 := HBoxContainer.new()
+	save_row2.add_theme_constant_override("separation", 20)
+	var unlock := _make_button("Unlock all regions", 32)
+	unlock.pressed.connect(func(): Save.unlock_everything(); _out.text = "All regions and Flights open."; save_changed.emit())
+	var reset_save := _make_button("Reset save", 32)
+	reset_save.pressed.connect(func(): Save.reset_all(); _out.text = "Save reset."; save_changed.emit())
+	save_row2.add_child(unlock)
+	save_row2.add_child(reset_save)
+	column.add_child(save_row2)
 	_out = _make_label("", 26, HORIZONTAL_ALIGNMENT_LEFT)
 	_out.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_out.custom_minimum_size = Vector2(0, 150)
+	_out.custom_minimum_size = Vector2(0, 120)
 	column.add_child(_out)
 	# The TUNE / CLOSE button, always on top, top-right. Hidden until the game has finished starting.
 	_button_layer = CanvasLayer.new()

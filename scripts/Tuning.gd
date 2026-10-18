@@ -52,24 +52,38 @@ var min_gap_factor := 1.8
 ## Hazard size multiplier.
 var hazard_scale := 1.0
 
+# ---------- Flights ----------
+## A Flight is this many legs (levels) in a row on ONE tank: leftover propane carries into the next leg.
+var legs_per_flight := 5.0
+## Coins floating in the layers of each leg (a Flight's third star needs star_coin_frac of all of them).
+var coins_per_leg := 3.0
+## Stars: 1 for finishing; 2 for finishing with at least star_propane_frac of the tank left; 3 for
+## collecting at least star_coin_frac of the Flight's floating coins.
+var star_propane_frac := 0.3
+var star_coin_frac := 0.6
+
 # ---------- Propane ----------
-## Tank size, which is also what a run starts with.
-var propane_start := 80.0
+## Tank size, which is also what a Flight starts with (a fresh tank every Flight).
+var propane_start := 100.0
 ## Propane burned per second while the burner fires.
-var burn_rate := 8.0
-## What one pickup gives back, the chance a layer carries one, and what clearing a level refills.
-var propane_refill := 25.0
+var burn_rate := 4.5
+## What one pickup gives back, the chance a layer carries one, and what clearing a leg refills (0 = nothing).
+var propane_refill := 20.0
 var propane_chance := 0.4
-var level_refill := 20.0
+var leg_refill := 0.0
 ## The gauge flashes below this fraction of the tank.
 var propane_low_fraction := 0.25
 
-# ---------- Score ----------
-## Score per level cleared, plus speed_bonus_per_s for every second under par (par = par_base + par_per_layer * layers).
+# ---------- Score and coins ----------
+## Score per leg cleared, plus speed_bonus_per_s for every second under par (par = par_base + par_per_layer * layers).
 var level_points := 100.0
 var speed_bonus_per_s := 10.0
 var par_base := 8.0
 var par_per_layer := 2.5
+## Coins (the currency): per leg cleared, per floating coin collected, and per unit of propane left at the end of a Flight.
+var leg_coins := 10.0
+var coin_value := 5.0
+var propane_coins := 0.3
 
 # ---------- Start-up pre-warm (splash screen) ----------
 ## At boot every shape is drawn for real behind a splash screen so shaders, buffers and font glyphs
