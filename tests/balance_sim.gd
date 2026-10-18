@@ -51,18 +51,18 @@ func rollout(m: Node, hold_steps: int, steps: int) -> Array:
 ## Fly a whole Flight. Returns a result string; stats collects stars / fuel / coins.
 func play(m: Node, fid: int, seed_i: int, stats: Dictionary) -> String:
 	root.get_node("Save").reset_all()
-	var plans := [0, 12, 24, 40, 70, 9999]
+	var plans := [0, 20, 45, 9999]
 	var t := 0.0
 	var tick := 0
 	m.start_flight(fid)
 	m.lanes.rng.seed = fid * 7919 + seed_i   # (layouts are fixed by the Flight; the seed only matters for sparks)
 	var plan_left := 0
 	while t < 400.0:
-		if m.screen == 1 and tick % 4 == 0:
+		if m.screen == 1 and tick % 6 == 0:
 			var best_plan := 0
 			var best_key := -1.0e9
 			for p in plans:
-				var r := rollout(m, p, 80)
+				var r := rollout(m, p, 70)
 				var key: float = (1.0e6 if r[0] else 0.0) + (1.0e5 if r[1] else 0.0) + float(r[3]) * 100.0 - float(r[2]) * 0.1 + float(r[4])
 				if key > best_key:
 					best_key = key
