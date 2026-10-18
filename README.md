@@ -4,12 +4,26 @@ A Frogger-style hot air balloon game (working title). Side view, low-poly shapes
 
 **Play:** https://hotshotted.github.io/Hot-Air-Balloon/
 
-- **Hold** (finger / mouse / Space) to fire the burner and rise. **Release** to sink slowly. The balloon has buoyancy lag: the air takes a moment to heat and cool.
-- The sky is split into horizontal wind layers. Each blows left or right at its own speed (drifting particles, streamers and chevrons show it) and the balloon drifts with the layer it is in. The screen edges wrap.
-- Every layer carries hazards that travel with its wind: birds, kites, other balloons, drones. Time your climbs and hold in the gaps.
+- **Three control schemes** (`?controls=`, see below). None has momentum or lag: the balloon does exactly what the input says.
+- The sky is split into horizontal wind layers. Each blows left or right at a **constant speed** (drifting particles, streamers and chevrons show it, and every layer has a label with arrows and px/s at its right edge: more arrows and a bigger number = faster). The balloon's sideways speed is **exactly** its layer's wind (it blends only for a moment when it changes layer). The screen edges wrap. There are no random gusts; the only change is a layer that reverses on a visible countdown.
+- Every layer carries hazards that travel with its wind: birds, kites, other balloons, drones. Time your climbs and slip through the gaps.
 - **Flights:** each Flight is a fixed chain of 5 legs generated from a seed (the same every time). One tank of propane for the whole Flight: what is left after a leg carries into the next. Failing a leg ends the Flight.
 - **Stars per Flight:** 1 for finishing, 1 for finishing with enough propane left (the gold tick on the gauge), 1 for collecting enough of the floating gold coins. Progress toward each is shown under the gauge.
 - **Coins** (currency): per leg cleared, per floating coin collected, and a bonus for leftover propane at the end. Score = legs x 100 + a speed bonus for every second under par.
+
+## Control schemes (`?controls=lanes|drag|steady`, default `lanes`)
+
+| Scheme | URL | How it works | Propane |
+| --- | --- | --- | --- |
+| **Lanes** | `?controls=lanes` | Tap the **top half** of the screen to rise one wind layer, the **bottom half** to drop one. The balloon moves to the centre of the target layer in a fixed `hop_time` (0.35 s) with smooth easing and stops dead. A tap during a hop queues at most one more hop. Keys: Up / W / Space = up, Down / S = down. | each hop **up** costs `hop_fuel` (4); free inside a thermal and from a Sandbag; down is free |
+| **Drag** | `?controls=drag` | **Drag up / down anywhere**: the altitude follows the finger 1:1 (only `drag_smooth` of smoothing, capped at `drag_max_speed`). Letting go holds the altitude. Keys: Up / Down move the target. | climbing burns `climb_burn_per_100px` (2.2) per 100 px; down is free |
+| **Steady** | `?controls=steady` | **Hold** (finger / mouse / Space / Up) to rise at a constant `steady_climb_speed` (300 px/s), release to sink at a constant `steady_sink_speed` (110 px/s). | same per-distance burn as drag |
+
+The active scheme is printed next to the build stamp. **Tools per scheme:** the Sandbag is a free hop up (lanes) or a free `sandbag_px` (230 px) burst (drag, steady); the Anchor freezes the balloon (no drift, no climbing) for 2 s in all three; the **Quick Vent exists only in steady** (lanes already drops a layer per tap, drag moves down as fast as the finger). In thin air (Himalayas) climbing costs up to 1 / (1 - `thin_air_loss`) times the propane; Sahara thermals lift for free (px/s in drag / steady, a free hop in lanes).
+
+**Drift preview** (all schemes; `?preview=off` hides it): a faint dotted line shows where the balloon will be over the next `preview_seconds` (1.5 s) if the input stays as it is, and a faint ring shows where each hazard will be at the end of it. Pickups (propane, coins, stars) hang still; the balloon sweeps past them.
+
+**Fairness checks:** `tests/smoke_test.gd` (CI) checks the mechanics of every scheme; `tests/fairness_sim.gd` (offline, minutes) is a planner that searches the real generated layouts for *any* clear path under a scheme's rules (see its header for what it does and does not prove).
 
 ## Variety, not density
 
@@ -27,13 +41,13 @@ Hazard density and wind speed are capped at moderate values (at most 4 hazards p
 
 **Player tools** (buttons below the ground line, with charges per leg; touches are handled in `Main._input`, so a second finger works while the first holds the burner). Each is available from the second Flight of its region on and shows a one-line intro the first time:
 
-- **Sandbag** (Alps): drop it for an instant climb burst, 2 per leg.
+- **Sandbag** (Alps): a free climb (one layer in lanes, a 230 px burst in drag / steady), 2 per leg.
 - **Anchor** (Sahara): hold position for 2 s, 1 per leg.
-- **Quick Vent** (Himalayas): dump hot air for a much faster descent, 2 per leg.
+- **Quick Vent** (Himalayas, steady scheme only): dump hot air for a much faster descent, 2 per leg.
 
-**Rhythm hazards** (patterns you can read): geese in V formation (they flap together), kites that dip together on a 2.4 s beat, periodic lightning (a white flash and a blinking column for 1.1 s, then the strike; three columns in a repeating order). **Changing winds:** some layers reverse on a visible countdown (`<> 5`), hazards and all.
+**Rhythm hazards** (patterns you can read): geese in V formation (they flap together), kites that dip together on a 2.4 s beat, periodic lightning (a white flash and a blinking column for 1.4 s, then the strike; three columns in a repeating order). **Changing winds:** some layers reverse on a visible countdown (`<> 5`), hazards and all.
 
-**Curriculum** (`Flights.CURRICULUM`): every Flight introduces at most one new idea and its legs only use ideas introduced so far: Climb, Star Collect, kite beat, Delivery, reversing winds, Rising Storm in the Countryside; the Alps add gusts, then the Sandbag, geese, Precision Landing and lightning; the Sahara their thermals and haze, then the Anchor; the Himalayas thin air and the jet stream, then the Quick Vent. A leg has at most two twists (kite beat / geese / reversing wind / lightning) and a storm leg has none besides the storm.
+**Curriculum** (`Flights.CURRICULUM`): every Flight introduces at most one new idea and its legs only use ideas introduced so far: Climb, Star Collect, kite beat, Delivery, reversing winds, Rising Storm in the Countryside; the Alps add strong winds, then the Sandbag, geese, Precision Landing and lightning; the Sahara their thermals and haze, then the Anchor; the Himalayas thin air and the jet stream, then the Quick Vent. A leg has at most two twists (kite beat / geese / reversing wind / lightning) and a storm leg has none besides the storm.
 
 ## The world
 
@@ -42,7 +56,7 @@ A map of 4 regions with 6 Flights each. A Flight opens when the one before it is
 | Region | Palette | Hazards | Mechanics |
 | --- | --- | --- | --- |
 | Countryside | green hills | birds, kites, balloons, drones | gentle winds |
-| Alps | icy blue, snow peaks | eagles, cable cars (+ birds, kites) | gusty layers: each layer's wind swells and fades over time |
+| Alps | icy blue, snow peaks | eagles, cable cars (+ birds, kites) | strong, steady winds (no gusts) |
 | Sahara | sand and sunset | vultures, flying carpets (+ balloons, drones) | thermals (columns of strong updraft) and sand haze that hides distant layers |
 | Himalayas | dusk purple, dark peaks | eagles, paragliders (+ birds, drones) | thin air (the burner weakens with altitude) and a fast jet-stream top layer |
 
@@ -99,7 +113,9 @@ Everything that repeats is pooled in fixed arrays, built once and drawn during t
 | Flag | Effect |
 | --- | --- |
 | `?perf` | rolling frame-time graph, worst-frame readout, script time per frame, hitch log, sim-vs-wall clock |
-| `?tune` | TUNE button (top-right): live sliders for buoyancy, burner, winds, hazard density, propane...; **Copy values** puts the changed values on the clipboard |
+| `?tune` | TUNE button (top-right): live sliders for hop time, drag smoothing, climb / sink speeds, winds, hazard density, propane...; **Copy values** puts the changed values on the clipboard |
+| `?controls=lanes\|drag\|steady` | the control scheme (default `lanes`) |
+| `?preview=off` | hide the drift preview (dotted path + hazard ghosts) |
 | `?level=N` | start at level N |
 | `?god` | hazards cannot hurt |
 | `?unlockall` | every region and Flight is open (not saved: drop the flag and the save decides again) |
@@ -107,7 +123,7 @@ Everything that repeats is pooled in fixed arrays, built once and drawn during t
 
 In the `?tune` panel: add coins, unlock all regions (every region and Flight, saved at once), 3-star everything (also unlocks everything and awards all postcards), reset save, reset daily, next day (to test streaks), and sliders for every setting above. The screen you are on refreshes at once; no reload needed.
 
-Combine with `&`, e.g. `?tune&perf&level=6`. Active flags are shown next to the build stamp (commit + UTC time, bottom-right).
+Combine with `&`, e.g. `?tune&perf&level=6`. Active flags and the control scheme are shown next to the build stamp (commit + UTC time, bottom-right).
 
 ## Project
 
