@@ -7,6 +7,7 @@ extends RefCounted
 ##   ?tune           show the on-screen tuning panel (TUNE button, top-right)
 ##   ?level=N        start at level N
 ##   ?god            nothing can hurt the balloon (to look at hazards)
+##   ?unlockall      every region and Flight is open (not saved: drop the flag and the save decides again)
 ## Combine with "&", e.g.  ?perf&level=5&god
 ## The active flags are printed under the build stamp.
 
@@ -17,6 +18,7 @@ static var perf := false
 static var tune := false
 static var start_level := 1
 static var god := false
+static var unlockall := false
 
 static func prewarm_enabled() -> bool:
 	_load()
@@ -25,6 +27,10 @@ static func prewarm_enabled() -> bool:
 static func perf_enabled() -> bool:
 	_load()
 	return perf
+
+static func unlockall_enabled() -> bool:
+	_load()
+	return unlockall
 
 static func tune_enabled() -> bool:
 	_load()
@@ -44,6 +50,8 @@ static func summary() -> String:
 		parts.append("level=%d" % start_level)
 	if god:
 		parts.append("god")
+	if unlockall:
+		parts.append("unlockall")
 	for b in _bad:
 		parts.append("?" + b)
 	return " ".join(parts)
@@ -70,6 +78,7 @@ static func parse(args: Array[String]) -> void:
 	tune = false
 	start_level = 1
 	god = false
+	unlockall = false
 	for a in args:
 		var kv := a.split("=", true, 1)
 		var key := kv[0].uri_decode().to_lower()
@@ -85,6 +94,8 @@ static func parse(args: Array[String]) -> void:
 				start_level = clampi(int(val), 1, 99)
 			"god":
 				god = true
+			"unlockall":
+				unlockall = true
 			"v":
 				pass  # cache-busting parameter added by the page, not a flag
 			_:

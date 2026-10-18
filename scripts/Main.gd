@@ -58,7 +58,7 @@ func _ready() -> void:
 		add_child(tune_panel)
 		tune_panel.build()
 		tune_panel.restart_requested.connect(func(): tune_panel.close(); start_flight(flight_id))
-		tune_panel.save_changed.connect(_refresh_menu)
+		tune_panel.save_changed.connect(_on_save_changed)
 	hud.fly_pressed.connect(func(): start_flight(selected))
 	hud.prev_pressed.connect(func(): _select(selected - 1))
 	hud.next_pressed.connect(func(): _select(selected + 1))
@@ -157,6 +157,18 @@ func _show_menu() -> void:
 	hud.set_air("")
 	hud.set_flight_hud(false)
 	_refresh_menu()
+
+## A ?tune debug button changed the save: redraw whatever screen is up, so nothing needs a reload.
+func _on_save_changed() -> void:
+	match screen:
+		SCREEN_MAP:
+			hud.map.refresh()
+		SCREEN_MENU:
+			_refresh_menu()
+		SCREEN_ALBUM:
+			hud.album.refresh()
+		SCREEN_SHOP:
+			hud.shop.refresh()
 
 func _open_daily() -> void:
 	selected = Flights.DAILY

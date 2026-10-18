@@ -130,8 +130,12 @@ func region_stars(region: int) -> int:
 		n += stars_of(Flights.id_of(region, i))
 	return n
 
+## Everything open: the saved debug switch (?tune) or the ?unlockall URL flag (which is never saved).
+func all_unlocked() -> bool:
+	return bool(data["unlock_all"]) or DebugFlags.unlockall_enabled()
+
 func region_unlocked(region: int) -> bool:
-	if data["unlock_all"] or region == 0:
+	if all_unlocked() or region == 0:
 		return true
 	return region_stars(region - 1) >= REGION_UNLOCK_STARS
 
@@ -139,7 +143,7 @@ func region_unlocked(region: int) -> bool:
 func flight_unlocked(id: int) -> bool:
 	if id < 0 or id >= Flights.TOTAL:
 		return false
-	if data["unlock_all"]:
+	if all_unlocked():
 		return true
 	if not region_unlocked(Flights.region_of(id)):
 		return false
@@ -158,6 +162,8 @@ func suggested_flight() -> int:
 
 ## Regions that are open but whose message has not been shown yet; marks them seen. Returns the first, or -1.
 func take_new_region() -> int:
+	if all_unlocked():   # nothing is "new" when everything was opened by a debug switch
+		return -1
 	for r in range(1, Flights.REGION_COUNT):
 		if region_unlocked(r) and not data["seen_regions"][r]:
 			data["seen_regions"][r] = true
@@ -255,16 +261,21 @@ func interstitial_shown() -> void:
 
 # ---- debug (?tune) ----
 
+## Unlock every region and every Flight in every region (and mark the regions as seen, so no "new region" message
+## fires later). Saved immediately.
+func unlock_everything() -> void:
+	data["unlock_all"] = true
+	for r in Flights.REGION_COUNT:
+		data["seen_regions"][r] = true
+	save()
+
+## 3 stars on every Flight, which also unlocks everything and awards every postcard (all gold). Saved immediately.
 func three_star_everything() -> void:
 	for i in Flights.TOTAL:
 		data["stars"][i] = 3
 	while not update_postcards().is_empty():
 		pass
-	save()
-
-func unlock_everything() -> void:
-	data["unlock_all"] = true
-	save()
+	unlock_everything()
 
 # ---- changes ----
 

@@ -89,6 +89,53 @@ func win_flight(m: Node, fid: int, coins: int, fuel: float) -> void:
 		if l < 4:
 			step(m, 1.5, 0)
 
+## All Buttons under `node`, by their text.
+func find_buttons(node: Node, out: Dictionary) -> void:
+	if node is Button:
+		out[(node as Button).text] = node
+	for c in node.get_children():
+		find_buttons(c, out)
+
+## The save file as it is on disk.
+func read_save() -> Dictionary:
+	var f := FileAccess.open(sv.PATH, FileAccess.READ)
+	var parsed = JSON.parse_string(f.get_as_text()) if f else null
+	return parsed if parsed is Dictionary else {}
+
+## Every region, Flight (and with `cards` every postcard) is open: in the live state, on the map, and in the saved file.
+func check_everything_open(m: Node, sv: Node, what: String, cards: bool) -> void:
+	var live := true
+	for r in 4:
+		live = live and sv.region_unlocked(r)
+	for id in 24:
+		live = live and sv.flight_unlocked(id)
+	check(live, "%s: every region and Flight is open (live state)" % what)
+	var mp = m.hud.map
+	var shown := true
+	for id in 24:
+		shown = shown and mp.nodes[id].visible and not mp.nodes[id].disabled
+	for r in 4:
+		shown = shown and not mp.region_locks[r].visible
+	check(shown, "%s: the map shows them all open, without a reload" % what)
+	# The saved file, read back through a fresh load.
+	var file_data := read_save()
+	var keep: Dictionary = sv.data
+	sv.data = sv._defaults()
+	sv._load()
+	var saved_ok := true
+	for r in 4:
+		saved_ok = saved_ok and sv.region_unlocked(r)
+		if cards:
+			saved_ok = saved_ok and sv.postcard_of(r) == 2
+	for id in 24:
+		saved_ok = saved_ok and sv.flight_unlocked(id)
+		if cards:
+			saved_ok = saved_ok and sv.stars_of(id) == 3
+	sv.data = keep
+	check(saved_ok and file_data.get("unlock_all", false) == true, "%s: every region and Flight is open (saved file)" % what)
+	if cards:
+		check([sv.postcard_of(0), sv.postcard_of(1), sv.postcard_of(2), sv.postcard_of(3)] == [2, 2, 2, 2] and Array(file_data["postcards"]).map(func(v): return int(v)) == [2, 2, 2, 2] and sv.total_stars() == 72 and mp.region_stars[3].text.begins_with("18/18"), "%s: all four postcards are awarded (live, saved, map)" % what)
+
 func tap(m: Node, pos: Vector2) -> void:
 	var ev := InputEventMouseButton.new()
 	ev.button_index = MOUSE_BUTTON_LEFT
@@ -1345,16 +1392,54 @@ func _run() -> void:
 	tp.close()
 	check(not tp.is_open and not paused, "closing resumes")
 	check(same(base2, snap()), "using the panel allocates nothing")
-	# Debug buttons in the panel change the save.
+	# Debug buttons in the panel: press each one for real and check the live state, the screen and the saved file.
+	sv.persist = true
 	sv.reset_all()
-	var sc := 0
-	tp.save_changed.connect(func(): sc += 1)
-	sv.add_coins(1000)
-	sv.three_star_everything()
-	sv.unlock_everything()
-	check(sv.coins == 1000 and sv.total_stars() == 72 and sv.region_unlocked(3), "?tune: coins, 3 stars everywhere, all regions")
+	m._show_map()
+	var tbtn: Dictionary = {}
+	find_buttons(tp, tbtn)
+	check(tbtn.has("Add 1000 coins") and tbtn.has("3-star everything") and tbtn.has("Unlock all regions") and tbtn.has("Reset save") and tbtn.has("Reset daily") and tbtn.has("Next day"), "the tune panel has every debug button")
+	var mp2 = m.hud.map
+	check(not mp2.nodes[23].visible and mp2.region_locks[3].visible, "(a fresh save: later regions are locked on the map)")
+	tbtn["Add 1000 coins"].pressed.emit()
+	check(sv.coins == 1000 and read_save()["coins"] == 1000 and mp2.coins_label.text == "coins 1,000", "Add 1000 coins: live, saved, and shown on the map")
+	# Unlock all regions.
+	tbtn["Unlock all regions"].pressed.emit()
+	check_everything_open(m, sv, "Unlock all regions", false)
+	check(sv.total_stars() == 0, "Unlock all regions does not touch the stars")
+	# Reset, then 3-star everything.
+	tbtn["Reset save"].pressed.emit()
+	check(sv.coins == 0 and sv.total_stars() == 0 and not sv.region_unlocked(1) and not sv.flight_unlocked(1) and read_save()["coins"] == 0 and not read_save()["unlock_all"], "Reset save: everything locked again, live and saved")
+	check(not mp2.nodes[23].visible and mp2.region_locks[1].visible and mp2.nodes[1].disabled, "...and the map is locked again without a reload")
+	tbtn["3-star everything"].pressed.emit()
+	check_everything_open(m, sv, "3-star everything", true)
+	tbtn["Reset save"].pressed.emit()
+	# Daily buttons.
+	sv.data["daily_last"] = 5
+	sv.data["daily_streak"] = 4
+	tbtn["Reset daily"].pressed.emit()
+	check(sv.data["daily_last"] == -1 and sv.data["daily_streak"] == 0 and read_save()["daily_last"] == -1, "Reset daily: live and saved")
+	FlightsS.debug_today = 30000
+	tbtn["Next day"].pressed.emit()
+	check(FlightsS.today() == 30001, "Next day moves the date on")
+	FlightsS.debug_today = -1
+	# The URL flag: everything open on load, nothing written to the save.
 	sv.reset_all()
-	check(sv.coins == 0 and sv.total_stars() == 0, "?tune: reset save")
+	DebugFlags.parse(["unlockall"])
+	check(DebugFlags.unlockall and DebugFlags.summary().contains("unlockall"), "?unlockall parses and shows in the stamp")
+	m._show_map()
+	var flag_all := true
+	for r in 4:
+		flag_all = flag_all and sv.region_unlocked(r)
+	for id in 24:
+		flag_all = flag_all and sv.flight_unlocked(id) and mp2.nodes[id].visible and not mp2.nodes[id].disabled
+	check(flag_all and not mp2.region_locks[3].visible, "?unlockall: every region and Flight is open on the map")
+	check(not read_save()["unlock_all"] and sv.total_stars() == 0 and sv.take_new_region() == -1, "...without writing anything to the save (and no spurious 'new region' message)")
+	DebugFlags.parse(["tune"])
+	m._show_map()
+	check(not sv.region_unlocked(1) and not mp2.nodes[23].visible, "without the flag the save decides again")
+	sv.reset_all()
+	sv.persist = false
 	m.free()
 	DebugFlags.parse([])
 	await process_frame

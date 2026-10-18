@@ -58,9 +58,10 @@ No SDK yet: a fake "Ad playing" screen stands in (`Ads.gd`, `Hud.show_ad`). All 
 | `?tune` | TUNE button (top-right): live sliders for buoyancy, burner, winds, hazard density, propane...; **Copy values** puts the changed values on the clipboard |
 | `?level=N` | start at level N |
 | `?god` | hazards cannot hurt |
+| `?unlockall` | every region and Flight is open (not saved: drop the flag and the save decides again) |
 | `?noprewarm` | skip the start-up pre-warm splash |
 
-In the `?tune` panel: add coins, unlock all regions, 3-star everything, reset save, reset daily, next day (to test streaks), and sliders for every setting above.
+In the `?tune` panel: add coins, unlock all regions (every region and Flight, saved at once), 3-star everything (also unlocks everything and awards all postcards), reset save, reset daily, next day (to test streaks), and sliders for every setting above. The screen you are on refreshes at once; no reload needed.
 
 Combine with `&`, e.g. `?tune&perf&level=6`. Active flags are shown next to the build stamp (commit + UTC time, bottom-right).
 
