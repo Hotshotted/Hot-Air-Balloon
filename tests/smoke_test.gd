@@ -798,6 +798,148 @@ func _run() -> void:
 	sv.reset_all()
 	m._show_map()
 
+	# ---- 6e. cosmetics ----
+	print("6e. cosmetics")
+	var CosS = load("res://scripts/Cosmetics.gd")
+	var BArtS = load("res://scripts/BalloonArt.gd")
+	check(CosS.ENV_NAMES.size() == CosS.ENV_PRICE.size() and CosS.ENV_NAMES.size() == CosS.ENV_C1.size() and CosS.ENV_NAMES.size() == CosS.ENV_SHAPE.size() and CosS.ENV_NAMES.size() == CosS.ENV_PATTERN.size(), "envelope tables line up")
+	check(CosS.BASKET_NAMES.size() == CosS.BASKET_PRICE.size() and CosS.PASSENGER_NAMES.size() == CosS.PASSENGER_PRICE.size(), "basket and passenger tables line up")
+	var looks := {}
+	for i in CosS.ENV_NAMES.size():
+		if CosS.ENV_SHAPE[i] == 0:
+			looks["%d %s %s" % [CosS.ENV_PATTERN[i], CosS.ENV_C1[i].to_html(), CosS.ENV_C2[i].to_html()]] = true
+	check(looks.size() >= 10, "at least 10 envelope patterns / colours (%d)" % looks.size())
+	check(CosS.ENV_NAMES.slice(11) == ["Cat", "Hot Dog", "Fish"] and CosS.ENV_SHAPE.slice(11) == [1, 2, 3], "three novelty envelope shapes: cat head, hot dog, fish")
+	check(CosS.BASKET_NAMES.size() >= 5, "at least 5 basket styles (%d)" % CosS.BASKET_NAMES.size())
+	check(CosS.PASSENGER_NAMES.slice(1) == ["Cat", "Dog", "Fox", "Owl", "Raccoon"], "five animal passengers")
+	check(CosS.ENV_PRICE[0] == 0 and CosS.BASKET_PRICE[0] == 0 and CosS.PASSENGER_PRICE[0] == 0, "item 0 of each category is free")
+	var cheapest := 99999
+	var total := 0
+	var all_pos := true
+	for cat in 3:
+		for i in range(1, CosS.count(cat)):
+			var pr: int = CosS.price(cat, i)
+			cheapest = mini(cheapest, pr)
+			total += pr
+			all_pos = all_pos and pr > 0
+	var flight_coins: float = CosS.typical_flight_coins()
+	check(all_pos and cheapest <= 2.0 * flight_coins and cheapest > 0.5 * flight_coins, "the first cosmetic is affordable after about 2 Flights (%d coins vs ~%d per Flight)" % [cheapest, int(flight_coins)])
+	check(float(total) >= 40.0 * flight_coins, "the full set takes many sessions (%d coins = ~%d Flights)" % [total, int(float(total) / flight_coins)])
+	# Buying and equipping.
+	sv.reset_all()
+	check(sv.owns(0, 0) and sv.owns(1, 0) and sv.owns(2, 0) and not sv.owns(0, 1) and sv.equipped(0) == 0, "only the defaults are owned at first")
+	check(not sv.buy(0, 1) and sv.coins == 0, "cannot buy without the coins")
+	sv.add_coins(1000)
+	check(sv.buy(0, 1) and sv.owns(0, 1) and sv.equipped(0) == 1 and sv.coins == 1000 - CosS.ENV_PRICE[1], "buying spends the coins and equips it")
+	check(not sv.buy(0, 1) and sv.coins == 1000 - CosS.ENV_PRICE[1], "cannot buy twice")
+	check(not sv.equip(0, 2) and sv.equipped(0) == 1, "cannot equip what you do not own")
+	check(sv.equip(0, 0) and sv.equipped(0) == 0 and sv.equip(0, 1) and sv.equipped(0) == 1, "equip switches between owned items")
+	check(not sv.buy(0, 99) and not sv.buy(5 - 3, -1), "bad indices are refused")
+	sv.persist = true
+	sv.reset_all()
+	sv.add_coins(900)
+	sv.buy(1, 3)
+	sv.buy(2, 4)
+	sv.data = sv._defaults()
+	sv._load()
+	check(sv.owns(1, 3) and sv.equipped(1) == 3 and sv.owns(2, 4) and sv.equipped(2) == 4 and not sv.owns(1, 2), "owned and equipped items survive a round trip")
+	var mig: Dictionary = sv._migrate({"version": 3, "coins": 10, "equipped": [5, 9, 0], "owned": [[true, false]]})
+	check(mig["owned"][0].size() == CosS.count(0) and mig["owned"][1].size() == CosS.count(1) and mig["equipped"] == [0, 0, 0] and mig["owned"][2][0] == true, "a v3 save gets the new fields; unowned / invalid equipped items fall back to the default")
+	sv.reset_all()
+	sv.persist = false
+	# Cosmetics are purely visual.
+	sv.add_coins(5000)
+	m.start_flight(0)
+	var ref_pos: Array[Vector2] = []
+	var ref_rad: Array[float] = []
+	var rise_ref := 0.0
+	for pass_i in 2:
+		if pass_i == 1:
+			sv.buy(0, 11)
+			sv.buy(1, 3)
+			sv.buy(2, 4)
+		m.start_flight(0)
+		clear_sky(m)
+		check(m.balloon.env_id == sv.equipped(0) and m.balloon.basket_id == sv.equipped(1) and m.balloon.pass_id == sv.equipped(2), "the balloon wears what is equipped")
+		step(m, 3.0, 1)
+		if pass_i == 0:
+			rise_ref = m.balloon.rise
+			for c in 3:
+				ref_pos.append(m.balloon.hit_pos(c))
+				ref_rad.append(m.balloon.hit_radius(c))
+		else:
+			var same_hit := true
+			for c in 3:
+				same_hit = same_hit and m.balloon.hit_pos(c).is_equal_approx(ref_pos[c]) and is_equal_approx(m.balloon.hit_radius(c), ref_rad[c])
+			check(m.balloon.env_id == 11 and m.balloon.basket_id == 3 and m.balloon.pass_id == 4, "cat envelope, gondola and owl are on the balloon")
+			check(same_hit and is_equal_approx(m.balloon.rise, rise_ref), "...and change nothing about hit circles or flight")
+	# Every envelope, basket and passenger draws (under real frames).
+	m.set_process(true)
+	for e in CosS.count(0):
+		m.balloon.env_id = e
+		m.balloon.heat = 0.8
+		m.balloon.queue_redraw()
+		await process_frame
+	for bk in CosS.count(1):
+		m.balloon.basket_id = bk
+		m.balloon.queue_redraw()
+		await process_frame
+	for ps in CosS.count(2):
+		m.balloon.pass_id = ps
+		m.balloon.queue_redraw()
+		await process_frame
+	m.set_process(false)
+	check(true, "all %d envelopes, %d baskets and %d passengers draw without errors" % [CosS.count(0), CosS.count(1), CosS.count(2)])
+	# The shop.
+	sv.reset_all()
+	sv.add_coins(400)
+	m._show_map()
+	var shop = m.hud.shop
+	var base_s := snap()
+	m.hud.map.shop_btn.pressed.emit()
+	check(m.screen == MainS.SCREEN_SHOP and shop.visible and not m.hud.map.visible and not m.hud.gauge.visible, "SHOP opens from the map")
+	check(shop.coins_label.text == "coins 400" and shop.category == 0, "shows the coins; envelopes first")
+	var vis := 0
+	for sl in shop.slots:
+		vis += 1 if sl.visible else 0
+	check(vis == CosS.count(0), "one slot per envelope (%d)" % vis)
+	shop._set_category(1)
+	vis = 0
+	for sl in shop.slots:
+		vis += 1 if sl.visible else 0
+	check(vis == CosS.count(1) and shop.tabs[1].disabled and not shop.tabs[0].disabled, "baskets tab shows the baskets")
+	shop._set_category(0)
+	shop._select(11)
+	check(shop.preview_ids() == [11, 0, 0], "the preview tries the selected item on")
+	check(shop.action_btn.text == "BUY  900" and shop.action_btn.disabled, "too expensive: BUY is disabled")
+	shop._select(1)
+	check(shop.action_btn.text == "BUY  150" and not shop.action_btn.disabled and shop.slot_prices[1].text == "150", "affordable: BUY is enabled")
+	var changed_n := 0
+	m.hud.cosmetics_changed.connect(func(): changed_n += 0)
+	shop.action_btn.pressed.emit()
+	check(sv.owns(0, 1) and sv.equipped(0) == 1 and sv.coins == 250 and shop.action_btn.text == "EQUIPPED" and shop.action_btn.disabled, "BUY buys and equips (250 coins left)")
+	check(shop.slot_prices[1].text == "EQUIPPED" and shop.slot_prices[0].text == "owned", "slots show owned / equipped")
+	shop._select(0)
+	check(shop.action_btn.text == "EQUIP" and not shop.action_btn.disabled, "an owned item offers EQUIP")
+	shop.action_btn.pressed.emit()
+	check(sv.equipped(0) == 0 and sv.coins == 250, "EQUIP is free")
+	shop._set_category(2)
+	shop._select(1)
+	shop.action_btn.pressed.emit()
+	check(sv.owns(2, 1) and sv.coins == 50 and shop.preview_ids() == [0, 0, 1], "a passenger is bought; the preview shows all three equipped")
+	m.hud.shop_closed.emit()
+	check(m.screen == MainS.SCREEN_MAP, "BACK returns to the map")
+	m.hud.map.shop_btn.pressed.emit()
+	shop._set_category(1)
+	shop._select(1)
+	m.hud.shop_closed.emit()
+	await process_frame
+	check(same(base_s, snap()), "the shop allocates nothing")
+	m.start_flight(0)
+	check(m.balloon.pass_id == 1, "the passenger rides in the next Flight")
+	sv.reset_all()
+	m._show_map()
+
 	# ---- 7. fairness ----
 	print("7. generated levels")
 	var bal_w: float = BalloonS.WIDTH * tn.balloon_scale

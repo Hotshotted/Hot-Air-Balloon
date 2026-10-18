@@ -13,6 +13,9 @@ signal next_flight_pressed
 signal back_pressed
 signal album_pressed
 signal album_closed
+signal shop_pressed
+signal shop_closed
+signal cosmetics_changed
 signal flight_chosen(id: int)
 
 var level_label: Label
@@ -25,6 +28,7 @@ var gauge: Control
 var air_label: Label
 var map: MapScreen
 var album: AlbumScreen
+var shop: ShopScreen
 var card_p: Control
 var card_view: PostcardView
 var card_header: Label
@@ -106,9 +110,14 @@ func _ready() -> void:
 	add_child(map)
 	map.flight_chosen.connect(func(id: int): flight_chosen.emit(id))
 	map.album_pressed.connect(func(): album_pressed.emit())
+	map.shop_pressed.connect(func(): shop_pressed.emit())
 	album = AlbumScreen.new()
 	add_child(album)
 	album.back_pressed.connect(func(): album_closed.emit())
+	shop = ShopScreen.new()
+	add_child(shop)
+	shop.back_pressed.connect(func(): shop_closed.emit())
+	shop.changed.connect(func(): cosmetics_changed.emit())
 	banner = Ui.label("", 84, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 760), Vector2(1000, 260))
 	banner.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	add_child(banner)
@@ -316,6 +325,7 @@ func hide_overlays() -> void:
 	banner.visible = false
 	map.visible = false
 	album.visible = false
+	shop.visible = false
 	card_p.visible = false
 	menu_p.visible = false
 	dead_p.visible = false
@@ -341,6 +351,11 @@ func show_map() -> void:
 	hide_overlays()
 	map.refresh()
 	map.visible = true
+
+func show_shop() -> void:
+	hide_overlays()
+	shop.open()
+	shop.visible = true
 
 func show_album() -> void:
 	hide_overlays()
@@ -376,6 +391,8 @@ func begin_prewarm() -> void:
 	hide_overlays()
 	map.refresh()
 	map.visible = true
+	shop.refresh()
+	shop.visible = true
 	album.refresh()
 	album.visible = true
 	album.zoom_p.visible = true

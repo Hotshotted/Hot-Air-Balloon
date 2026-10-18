@@ -3,7 +3,7 @@ extends Node
 ## storage on the web). New versions only ADD fields: _migrate() fills anything an older file lacks from the
 ## defaults, so old saves keep working. Tests switch `persist` off.
 
-const VERSION := 3
+const VERSION := 4
 const PATH := "user://wind_layers_save.json"
 ## Stars needed in a region (of 18) to open the next one.
 const REGION_UNLOCK_STARS := 12
@@ -32,7 +32,15 @@ func _defaults() -> Dictionary:
 		"seen_regions": [true, false, false, false],   # regions whose "unlocked" message has been shown (v2)
 		"last_flight": 0,         # the Flight last opened (v2)
 		"postcards": [0, 0, 0, 0],   # per region: 0 none, 1 postcard, 2 gold postcard (v3)
+		"owned": [_owned_default(Cosmetics.ENV), _owned_default(Cosmetics.BASKET), _owned_default(Cosmetics.PASSENGER)],   # per category: owned flags (v4)
+		"equipped": [0, 0, 0],    # per category: the equipped item (v4)
 	}
+
+func _owned_default(cat: int) -> Array:
+	var a := []
+	for i in Cosmetics.count(cat):
+		a.append(i == 0)   # item 0 is the free default
+	return a
 
 func _load() -> void:
 	if not FileAccess.file_exists(PATH):
@@ -59,6 +67,23 @@ func _migrate(old: Dictionary) -> Dictionary:
 			arr[i] = bool(arr[i]) if k == "seen_regions" else int(arr[i])
 		while arr.size() < (Flights.REGION_COUNT if k == "seen_regions" or k == "postcards" else Flights.TOTAL):
 			arr.append(false if k == "seen_regions" else 0)
+	# Cosmetics: grow the owned lists if the catalogue grew, and keep the equipped items valid and owned.
+	while d["owned"].size() < 3:
+		d["owned"].append([])
+	for cat in 3:
+		var owned: Array = d["owned"][cat] if d["owned"][cat] is Array else []
+		while owned.size() < Cosmetics.count(cat):
+			owned.append(owned.size() == 0)
+		owned = owned.slice(0, Cosmetics.count(cat))
+		for i in owned.size():
+			owned[i] = bool(owned[i])
+		owned[0] = true
+		d["owned"][cat] = owned
+	while d["equipped"].size() < 3:
+		d["equipped"].append(0)
+	for cat in 3:
+		var e := int(d["equipped"][cat])
+		d["equipped"][cat] = e if e >= 0 and e < Cosmetics.count(cat) and d["owned"][cat][e] else 0
 	d["coins"] = int(d["coins"])
 	d["flights_played"] = int(d["flights_played"])
 	d["last_flight"] = clampi(int(d["last_flight"]), 0, Flights.TOTAL - 1)
@@ -158,6 +183,32 @@ func update_postcards() -> Array:
 			save()
 			return [r, want]
 	return []
+
+# ---- cosmetics ----
+
+func owns(cat: int, i: int) -> bool:
+	return i >= 0 and i < Cosmetics.count(cat) and bool(data["owned"][cat][i])
+
+func equipped(cat: int) -> int:
+	return int(data["equipped"][cat])
+
+## Buy item i of a category with coins (and equip it). False if already owned or too expensive.
+func buy(cat: int, i: int) -> bool:
+	if i < 0 or i >= Cosmetics.count(cat) or owns(cat, i):
+		return false
+	if not spend(Cosmetics.price(cat, i)):
+		return false
+	data["owned"][cat][i] = true
+	data["equipped"][cat] = i
+	save()
+	return true
+
+func equip(cat: int, i: int) -> bool:
+	if not owns(cat, i):
+		return false
+	data["equipped"][cat] = i
+	save()
+	return true
 
 # ---- debug (?tune) ----
 

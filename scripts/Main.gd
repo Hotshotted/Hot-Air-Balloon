@@ -4,7 +4,7 @@ extends Node2D
 ## One scene for the whole session. Restarting is IN PLACE: the pooled hazards, effects and UI nodes
 ## stay alive (and warm); only the game state is reset.
 
-enum { SCREEN_MENU, SCREEN_PLAY, SCREEN_CLEAR, SCREEN_DEAD, SCREEN_RESULT, SCREEN_MAP, SCREEN_ALBUM }
+enum { SCREEN_MENU, SCREEN_PLAY, SCREEN_CLEAR, SCREEN_DEAD, SCREEN_RESULT, SCREEN_MAP, SCREEN_ALBUM, SCREEN_SHOP }
 ## Seconds the "leg cleared" banner holds before the next leg starts.
 const CLEAR_HOLD := 1.3
 
@@ -57,6 +57,8 @@ func _ready() -> void:
 	hud.back_pressed.connect(_show_map)
 	hud.album_pressed.connect(_show_album)
 	hud.album_closed.connect(_show_map)
+	hud.shop_pressed.connect(_show_shop)
+	hud.shop_closed.connect(_show_map)
 	hud.flight_chosen.connect(func(id: int): selected = id; _show_menu())
 	hud.next_flight_pressed.connect(_on_next_flight)
 	selected = Save.suggested_flight()
@@ -101,6 +103,13 @@ func _show_map() -> void:
 	hud.set_air("")
 	hud.set_flight_hud(false)
 	hud.show_map()
+
+func _show_shop() -> void:
+	screen = SCREEN_SHOP
+	lanes.visible = false
+	balloon.visible = false
+	hud.set_flight_hud(false)
+	hud.show_shop()
 
 func _show_album() -> void:
 	screen = SCREEN_ALBUM
@@ -159,6 +168,7 @@ func _prewarm() -> void:
 	var t_last := t_start
 	var t_burst := -100000
 	var calm_frames := 0
+	var shop_tick := 0
 	while true:
 		var now := Time.get_ticks_msec()
 		if now - t_burst > 350:
@@ -167,6 +177,8 @@ func _prewarm() -> void:
 			lanes.burst(Vector2(780, 900), Color(1.0, 0.5, 0.15), 12, 300.0)
 		balloon.heat = 1.0
 		balloon.queue_redraw()
+		hud.shop.prewarm_show(shop_tick % 26)
+		shop_tick += 1
 		lanes.update(minf(get_process_delta_time(), 0.05))
 		await get_tree().process_frame
 		var t := Time.get_ticks_msec()

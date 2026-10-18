@@ -28,6 +28,16 @@ Difficulty rises across the 6 Flights of a region (more hazard kinds, denser lay
 
 Completing a region's last Flight awards its postcard: a small illustrated card of the region built from primitives, with a title. 3-starring all six Flights of the region upgrades it to a gold postcard (gold frame, corner stars, ribbon). The Postcard Album (button on the map) shows all four; tap one to see it large.
 
+## Shop (cosmetics)
+
+Bought with coins; purely visual (hit circles and flight are never affected). Equipped items show in the game, on the map (the balloon beside the next Flight) and in the shop preview, where you can try an item on before buying.
+
+- **Envelopes:** 10 patterns / colours (Sunset, Candy, Ocean, Mint, Berry, Lemon, Checkers, Forest, Starry, Rainbow) and 3 novelty shapes (Cat, Hot Dog, Fish).
+- **Baskets:** Wicker (free), Crate, Bucket, Gondola, Barrel, Cabin.
+- **Passengers:** Cat, Dog, Fox, Owl, Raccoon ride in the basket.
+
+A Flight pays about 100 coins, the cheapest item costs 150 (about two Flights) and the full set about 8,300 (some 80 Flights). All prices are in `scripts/Cosmetics.gd`.
+
 ## Debug flags (URL query)
 
 | Flag | Effect |
