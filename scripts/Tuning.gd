@@ -12,21 +12,21 @@ var stall_delta := 0.25
 ## Frames skipped (no simulation) after a stall or the window coming back, so nothing catches up.
 var resume_skip_frames := 2
 
-# ---------- Controls (?controls=lanes|drag|steady) ----------
-## No buoyancy lag, no momentum: every scheme moves the balloon exactly as the input says.
-## lanes: a tap on the top / bottom half of the screen hops one layer up / down; the hop takes hop_time seconds with
-## smooth easing, and each hop UP costs hop_fuel propane (a hop inside a thermal, or from a Sandbag, is free).
+# ---------- Controls: swipe lanes ----------
+## No buoyancy, no momentum. Swipe up / down anywhere (a short drag of at least swipe_min_px) to hop one wind layer up / down.
+## The hop takes hop_time seconds with smooth easing and the balloon stops dead, then bobs slightly (bob_amp px, fading at
+## bob_decay per second, wobbling at bob_rate rad/s). A swipe during a hop queues at most one more hop.
+## Each hop UP costs hop_fuel propane (free inside a thermal and from a Sandbag); going down is free.
 var hop_time := 0.35
 var hop_fuel := 1.5
-## drag: the balloon follows the finger 1:1 with only light smoothing (drag_smooth, 1/s; 20 = about 50 ms) and never
-## faster than drag_max_speed px/s. Releasing holds the altitude.
-var drag_smooth := 20.0
-var drag_max_speed := 1400.0
-## steady: hold to rise at steady_climb_speed, release to sink at steady_sink_speed (px/s), constant, no lag.
-var steady_climb_speed := 300.0
-var steady_sink_speed := 110.0
-## drag and steady: climbing burns climb_burn_per_100px propane per 100 px climbed (descending is free in every scheme).
-var climb_burn_per_100px := 0.9
+var swipe_min_px := 36.0
+var bob_amp := 7.0
+var bob_decay := 7.0
+var bob_rate := 16.0
+## Sandbag / Quick Vent hop this many layers at once.
+var tool_layers := 2.0
+## Volume of the burner and vent sounds (dB).
+var sfx_db := -8.0
 ## The balloon's sideways speed is exactly its layer's wind; it blends to a new layer's wind over wind_blend_time seconds.
 var wind_blend_time := 0.25
 ## true: leaving one side of the screen brings the balloon back on the other. false: the edges block.
@@ -117,25 +117,20 @@ var storm_speed_per_leg := 2.0
 var storm_start_delay := 2.0
 var stars_per_leg := 4.0
 ## Precision Landing: the airship drifts at airship_speed (px/s); its deck is +-airship_deck_half wide; the balloon may
-## touch down at up to land_speed (px/s of descent), faster is a hard landing.
+## touch down by hopping down onto it from the sky above.
 var airship_speed := 45.0
 var airship_deck_half := 130.0
-var land_speed := 170.0
 ## Delivery: a mooring platform picks up / takes the mail when the balloon is within these distances of it.
 var dock_half_w := 100.0
 var dock_half_h := 70.0
 
 # ---------- Player tools (unlocked by region) ----------
-## Sandbag (Alps): a free climb burst: one layer up in lanes, sandbag_px px in drag / steady. Anchor (Sahara): hold
-## position (no drift, no climbing) for anchor_seconds. Quick Vent (Himalayas, steady only): descend vent_mult times
-## faster for vent_seconds. Charges are per leg.
+## Sandbag (Alps): an instant two-layer hop up that costs no propane. Anchor (Sahara): stop drifting sideways and hold
+## position in the layer for anchor_seconds. Quick Vent (Himalayas): an instant two-layer drop. Charges are per leg.
 var sandbag_charges := 2.0
-var sandbag_px := 230.0
 var anchor_charges := 1.0
 var anchor_seconds := 2.0
 var vent_charges := 2.0
-var vent_seconds := 1.6
-var vent_mult := 3.0
 
 # ---------- Rhythm and changing winds ----------
 ## Kites dip on a beat: all the kites of a layer dip together every kite_beat_period seconds (by kite_dip of the free height).

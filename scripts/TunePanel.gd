@@ -16,13 +16,10 @@ signal save_changed
 
 ## [Tuning property, label, min, max, step]: the values tuned most.
 const ENTRIES := [
-	["hop_time", "Lanes: hop time (s)", 0.15, 0.8, 0.01],
-	["hop_fuel", "Lanes: propane per hop up", 0.0, 15.0, 0.5],
-	["drag_smooth", "Drag: smoothing (1/s, high = tight)", 4.0, 60.0, 1.0],
-	["drag_max_speed", "Drag: max speed (px/s)", 300.0, 2000.0, 50.0],
-	["steady_climb_speed", "Steady: climb speed (px/s)", 100.0, 600.0, 10.0],
-	["steady_sink_speed", "Steady: sink speed (px/s)", 30.0, 300.0, 5.0],
-	["climb_burn_per_100px", "Drag/steady: propane per 100 px climbed", 0.5, 8.0, 0.1],
+	["hop_time", "Hop time (s)", 0.15, 0.8, 0.01],
+	["hop_fuel", "Propane per hop up", 0.0, 15.0, 0.5],
+	["swipe_min_px", "Swipe: minimum length (px)", 10.0, 120.0, 2.0],
+	["bob_amp", "Settling bob (px)", 0.0, 20.0, 0.5],
 	["wind_blend_time", "Wind blend on a layer change (s)", 0.0, 1.0, 0.05],
 	["preview_seconds", "Preview length (s)", 0.5, 3.0, 0.1],
 	["balloon_scale", "Balloon size", 0.5, 1.2, 0.05],

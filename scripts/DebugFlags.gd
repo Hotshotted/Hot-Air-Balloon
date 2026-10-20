@@ -7,7 +7,6 @@ extends RefCounted
 ##   ?tune           show the on-screen tuning panel (TUNE button, top-right)
 ##   ?level=N        start at level N
 ##   ?god            nothing can hurt the balloon (to look at hazards)
-##   ?controls=lanes|drag|steady   the control scheme (default lanes: tap the top / bottom half to hop a layer up / down)
 ##   ?preview=off    switch the drift preview (dotted path + ghost hazards) off
 ##   ?unlockall      every region and Flight is open (not saved: drop the flag and the save decides again)
 ## Combine with "&", e.g.  ?perf&level=5&god
@@ -21,9 +20,7 @@ static var tune := false
 static var start_level := 1
 static var god := false
 static var unlockall := false
-static var controls := "lanes"
 static var preview := true
-const SCHEMES := ["lanes", "drag", "steady"]
 
 static func prewarm_enabled() -> bool:
 	_load()
@@ -32,11 +29,6 @@ static func prewarm_enabled() -> bool:
 static func perf_enabled() -> bool:
 	_load()
 	return perf
-
-## 0 lanes, 1 drag, 2 steady.
-static func controls_index() -> int:
-	_load()
-	return maxi(SCHEMES.find(controls), 0)
 
 static func preview_enabled() -> bool:
 	_load()
@@ -95,7 +87,6 @@ static func parse(args: Array[String]) -> void:
 	start_level = 1
 	god = false
 	unlockall = false
-	controls = "lanes"
 	preview = true
 	for a in args:
 		var kv := a.split("=", true, 1)
@@ -114,11 +105,6 @@ static func parse(args: Array[String]) -> void:
 				god = true
 			"unlockall":
 				unlockall = true
-			"controls":
-				if SCHEMES.has(val):
-					controls = val
-				else:
-					_bad.append("controls=" + val)
 			"preview":
 				preview = not (val in ["off", "0", "false", "no"])
 			"v":

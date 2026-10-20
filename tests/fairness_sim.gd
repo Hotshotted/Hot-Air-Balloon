@@ -1,15 +1,12 @@
 extends SceneTree
 ## Offline fairness check (not part of CI; minutes, not seconds):
-##   godot --headless --path . --script res://tests/fairness_sim.gd -- scheme=lanes|drag|steady [flights=0,7,13|all] [legs=0,1,2,3,4] [dt=0.1] [margin=18] [cap=3000]
+##   godot --headless --path . --script res://tests/fairness_sim.gd -- [flights=0,7,13|all] [legs=0,1,2,3,4] [dt=0.1] [margin=18] [cap=3000]
 ## For every chosen leg of every chosen Flight it asks: is there ANY sequence of inputs that finishes the leg without
 ## touching anything, when the player has to keep `margin` extra pixels of clearance from every hazard and the
 ## goal is the leg's own goal (climb / stars / delivery / storm / landing)? It searches the real generated layout
 ## (hazard positions, winds incl. reversing layers, kite beat, lightning, storm, airship) exactly like the game rolls
-## it forward, on a time grid of `dt` seconds, with the balloon model of the chosen scheme:
-##   lanes  : levels (ground, every layer's centre, the goal / the sky above the top layer), a hop = hop_time, eased
-##   steady : hold = rise steady_climb_speed, release = sink steady_sink_speed
-##   drag   : like lanes' hops but anywhere: the altitude may change by up to drag_max_speed * dt per step (so it is
-##            a superset of lanes: reported only to confirm that)
+## it forward, on a time grid of `dt` seconds, with the swipe-lanes balloon: levels (ground, every layer's centre, the
+## goal / the sky above the top layer), a hop = hop_time, eased (Sandbag and Quick Vent only help, so they are ignored)
 ## It is a PLANNER, not a human: it knows the future and has no reaction time (the margin and the time grid stand in for
 ## that). Propane: the cost of the cheapest found path is reported; pickups are ignored (they only help).
 ## "solvable" means a path was found within `cap` states per step: if not, the state cap may have hidden one, so a
@@ -18,7 +15,6 @@ extends SceneTree
 const BUCKET_X := 12.0
 const BUCKET_Y := 14.0
 
-var scheme := "lanes"
 var dt := 0.1
 var margin := 18.0
 var cap := 600
@@ -51,7 +47,6 @@ func _initialize() -> void:
 	for a in OS.get_cmdline_user_args():
 		var kv := a.split("=")
 		match kv[0]:
-			"scheme": scheme = kv[1]
 			"dt": dt = float(kv[1])
 			"margin": margin = float(kv[1])
 			"cap": cap = int(kv[1])
@@ -76,7 +71,6 @@ func _initialize() -> void:
 	root.add_child(bal)
 	await process_frame
 	bal.lanes = lanes
-	bal.scheme = ["lanes", "drag", "steady"].find(scheme)
 	var goal_names := ["climb", "stars", "delivery", "storm", "landing"]
 	var tot := {}
 	var ok_n := 0
@@ -108,7 +102,7 @@ func _initialize() -> void:
 					slow += 1
 			line += "  L%d %-8s %s" % [l + 1, g, ("%4.1fs %2.0fp" % [res[0], res[1]]) if res[0] >= 0.0 else " NO PATH "]
 		print(line)
-	print("--- %s: %d / %d legs solvable (margin %.0f px, dt %.2f)" % [scheme, ok_n, all_n, margin, dt])
+	print("--- swipe lanes: %d / %d legs solvable (margin %.0f px, dt %.2f)" % [ok_n, all_n, margin, dt])
 	for g in tot:
 		print("    %-9s %d / %d" % [g, tot[g][0], tot[g][1]])
 	print("    paths needing more than half a tank: %d, slower than 40 s: %d" % [fuel_over, slow])
@@ -218,7 +212,6 @@ func _solve() -> Array:
 	var n: int = L.n_lanes
 	var lv_hop := int(round(tn.hop_time / dt))
 	var cost_hop: float = tn.hop_fuel
-	var burn_px: float = tn.climb_burn_per_100px * 0.01
 	var blocked_top := goal == 1 or goal == 2   # stars / delivery: no going through the top until done
 	var n_stars: int = L.gs_count
 	var all_mask := (1 << n_stars) - 1 if only_star < 0 else (1 << only_star)
@@ -332,38 +325,25 @@ func _actions(st: Array, n: int, lv_hop: int, ceil_in: float, fy: float) -> Arra
 	if (recipe.goal == 1 and (st[6] & ((1 << lanes.gs_count) - 1 if only_star < 0 else (1 << only_star))) == ((1 << lanes.gs_count) - 1 if only_star < 0 else (1 << only_star))) or (recipe.goal == 2 and st[6] == 3):
 		ceil_y = -1.0e5   # the goal is met: the top is open
 	var y: float = st[1]
-	var burn_px: float = tn.climb_burn_per_100px * 0.01
-	match scheme:
-		"steady":
-			var up: float = maxf(y - tn.steady_climb_speed * dt, ceil_y)
-			var down: float = minf(y + tn.steady_sink_speed * dt, fy)
-			out.append([up, (y - up) * burn_px, -1, 0.0, 0.0])
-			out.append([down, 0.0, -1, 0.0, 0.0])
-		"drag":
-			var reach: float = tn.drag_max_speed * dt * 0.6
-			for dy in [-reach, -reach * 0.5, 0.0, reach * 0.5, reach]:
-				var ny: float = clampf(y + dy, ceil_y, fy)
-				out.append([ny, maxf(y - ny, 0.0) * burn_px, -1, 0.0, 0.0])
-		_:
-			var hp: int = st[3]
-			if hp >= 0:   # a hop in progress
-				var p: float = float(hp + 1) / float(lv_hop)
-				var ny2: float = lerpf(st[4], st[5], p * p * (3.0 - 2.0 * p))
-				out.append([ny2, 0.0, (hp + 1) if hp + 1 < lv_hop else -1, st[4], st[5]])
-				return out
-			out.append([y, 0.0, -1, 0.0, 0.0])
-			var lv: int = bal.nearest_level(y)
-			for dir in [1, -1]:
-				var to: int = lv + dir
-				if to < -1 or to > n:
-					continue
-				var ty: float = bal.level_y(to)
-				if ty < ceil_y:
-					continue
-				var cost: float = tn.hop_fuel if dir > 0 else 0.0
-				if dir > 0 and lanes.thermal_lift(st[0]) > 0.0:
-					cost = 0.0
-				var p1: float = 1.0 / float(lv_hop)
-				var ny3: float = lerpf(y, ty, p1 * p1 * (3.0 - 2.0 * p1))
-				out.append([ny3, cost, 1 if lv_hop > 1 else -1, y, ty])
+	var hp: int = st[3]
+	if hp >= 0:   # a hop in progress
+		var p: float = float(hp + 1) / float(lv_hop)
+		var ny2: float = lerpf(st[4], st[5], p * p * (3.0 - 2.0 * p))
+		out.append([ny2, 0.0, (hp + 1) if hp + 1 < lv_hop else -1, st[4], st[5]])
+		return out
+	out.append([y, 0.0, -1, 0.0, 0.0])
+	var lv: int = bal.nearest_level(y)
+	for dir in [1, -1]:
+		var to: int = lv + dir
+		if to < -1 or to > n:
+			continue
+		var ty: float = bal.level_y(to)
+		if ty < ceil_y:
+			continue
+		var cost: float = tn.hop_fuel if dir > 0 else 0.0
+		if dir > 0 and lanes.thermal_lift(st[0]) > 0.0:
+			cost = 0.0
+		var p1: float = 1.0 / float(lv_hop)
+		var ny3: float = lerpf(y, ty, p1 * p1 * (3.0 - 2.0 * p1))
+		out.append([ny3, cost, 1 if lv_hop > 1 else -1, y, ty])
 	return out

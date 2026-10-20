@@ -101,7 +101,7 @@ var _over33 := 0                       # frames over 33 ms in the last window
 var _frames_win := 0
 var _prof_text := ""
 ## Where the three tool buttons are (below the ground line). Touches are handled by Main (so a second finger works
-## while the first holds the burner); the buttons themselves are only drawn.
+## while the first swipes); the buttons themselves are only drawn.
 const TOOL_RECTS := [Rect2(30, 1742, 320, 110), Rect2(380, 1742, 320, 110), Rect2(730, 1742, 320, 110)]
 const TOOL_NAMES := ["SANDBAG", "ANCHOR", "QUICK VENT"]
 const GRAPH_N := 120
@@ -116,7 +116,7 @@ func _ready() -> void:
 	stamp_label = Ui.label("", 22, HORIZONTAL_ALIGNMENT_RIGHT, Vector2(560, 1870), Vector2(500, 36))
 	stamp_label.modulate = Color(1, 1, 1, 0.6)
 	var flags := DebugFlags.summary()
-	stamp_label.text = "%s  %s  controls=%s%s" % [BuildInfo.COMMIT, BuildInfo.TIME, DebugFlags.controls, ("  " + flags) if flags != "" else ""]
+	stamp_label.text = "%s  %s%s" % [BuildInfo.COMMIT, BuildInfo.TIME, ("  " + flags) if flags != "" else ""]
 	for l in [level_label, score_label, coins_label, stamp_label]:
 		add_child(l)
 	gauge = Control.new()
