@@ -777,7 +777,7 @@ func storm_hits(balloon: Balloon) -> bool:
 func lightning_hits(balloon: Balloon) -> bool:
 	return lt_on and lt_state == 2 and absf(balloon.position.x - lt_x) < Tuning.lightning_width * 0.5 + 20.0
 
-## Airship and balloon. Returns 0 nothing, 1 landed. The hull is solid from below and from the side
+## Airship and balloon. Returns 0 nothing, 1 landed, 2 hard landing. The hull is solid from below and from the side
 ## (the balloon is pushed back under / beside it); only the deck, from above and slowly, counts as a landing.
 func ship_contact(balloon: Balloon) -> int:
 	if not ship_on:
@@ -793,10 +793,10 @@ func ship_contact(balloon: Balloon) -> int:
 	if top_y < hull_bottom and balloon.position.y > SHIP_DECK_Y:
 		# below / inside the hull: pushed back out underneath it
 		balloon.position.y = hull_bottom + 56.0 * s
-		balloon.bump_down()
+		balloon.rise = minf(balloon.rise, 0.0)
 		return 0
 	if basket_y >= SHIP_DECK_Y and balloon.position.y <= SHIP_DECK_Y and absf(dx) <= half:
-		return 1   # (a hop is a controlled move: touching down from one is always gentle)
+		return 1 if balloon.descent_speed() <= Tuning.land_speed else 2
 	return 0
 
 ## A pooled burst of square sparks.

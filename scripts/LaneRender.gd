@@ -40,11 +40,12 @@ var lightning: LightningFx
 var _rev_labels: Array[Label] = []
 var _wind_labels: Array[Label] = []      # per layer: arrows and speed at the right edge (bigger = faster)
 var _wind_shown := PackedInt32Array()
-var _pv_dots: MultiMeshInstance2D        # drift preview: the balloon's predicted path
+var _pv_dots: MultiMeshInstance2D        # drift preview: the balloon's path if the burner keeps firing
+var _pv_dots2: MultiMeshInstance2D       # ...and if it is released now
+var _pv_dot_buf2 := PackedFloat32Array()
 var _pv_ghosts: MultiMeshInstance2D      # ...and where each hazard will be at the end of it
 var _pv_dot_buf := PackedFloat32Array()
 var _pv_ghost_buf := PackedFloat32Array()
-var _pv_n_ghosts := 0
 var _rev_shown := PackedInt32Array()
 var _tk: MultiMeshInstance2D
 var _cn: MultiMeshInstance2D
@@ -165,7 +166,10 @@ func _ready() -> void:
 	var dm := ShapeMesh.new()
 	dm.circle(Vector2.ZERO, 1.0, Color.WHITE, false, 0.0, 0.0, 8)
 	_pv_dots = _make_mm(dm.build(), Balloon.PRED_N, false, null, HZ_STRIDE)
-	_pv_dots.modulate = Color(1, 1, 1, 0.8)
+	_pv_dots.modulate = Color(1.0, 0.6, 0.2, 0.85)
+	_pv_dots2 = _make_mm(dm.build(), Balloon.PRED_N, false, null, HZ_STRIDE)
+	_pv_dots2.modulate = Color(0.85, 0.95, 1.0, 0.85)
+	_pv_dot_buf2.resize(Balloon.PRED_N * HZ_STRIDE)
 	_pv_dot_buf.resize(Balloon.PRED_N * HZ_STRIDE)
 	var gm := ShapeMesh.new()
 	var ring: Array = []
@@ -387,19 +391,27 @@ func _update_preview(L: Lanes) -> void:
 	var bal := L.preview_balloon
 	if bal == null:
 		_pv_dots.visible = false
+		_pv_dots2.visible = false
 		_pv_ghosts.visible = false
 		return
 	_pv_dots.visible = true
+	_pv_dots2.visible = true
 	_pv_ghosts.visible = true
 	for k in Balloon.PRED_N:
 		var b := k * HZ_STRIDE
 		var r := 4.0 + 5.0 * float(k) / float(Balloon.PRED_N - 1)   # growing: the end of the path stands out
 		_pv_dot_buf[b] = r
-		_pv_dot_buf[b + 3] = bal.pred[k].x
+		_pv_dot_buf[b + 3] = bal.pred_burn[k].x
 		_pv_dot_buf[b + 5] = r
-		_pv_dot_buf[b + 7] = bal.pred[k].y + 20.0 * bal.s()   # (the path of the basket's middle)
+		_pv_dot_buf[b + 7] = bal.pred_burn[k].y + 20.0 * bal.s()   # (the path of the basket's middle)
+		_pv_dot_buf2[b] = r
+		_pv_dot_buf2[b + 3] = bal.pred_rel[k].x
+		_pv_dot_buf2[b + 5] = r
+		_pv_dot_buf2[b + 7] = bal.pred_rel[k].y + 20.0 * bal.s()
 	_pv_dots.multimesh.buffer = _pv_dot_buf
 	_pv_dots.multimesh.visible_instance_count = Balloon.PRED_N
+	_pv_dots2.multimesh.buffer = _pv_dot_buf2
+	_pv_dots2.multimesh.visible_instance_count = Balloon.PRED_N
 	var n := 0
 	for i in L.n_lanes:
 		var k := L.lane_kind[i]

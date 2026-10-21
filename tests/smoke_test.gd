@@ -3,12 +3,11 @@ extends SceneTree
 ## Exits with code 1 if anything below fails (CI runs this before exporting).
 ##   1. ?debug flags parse
 ##   2. boot: the splash pre-warm draws every shape, lasts long enough, then cleans up; menu is up
-##   3. balloon (swipe lanes): a swipe hops one layer (short, forgiving threshold, one hop per swipe, at most one queued),
-##      fixed hop time with easing, no momentum, a settling bob, burner / vent effects, propane per hop up,
-##      sideways speed exactly the wind of its layer (blend only on a layer change), edges wrap / block,
-##      the drift preview, constant winds with labels, pickups that hang still
+##   3. balloon: hold to burn, buoyancy lag at half the original response time, capped climb / sink speeds, tethered on
+##      the ground, sideways speed exactly the wind of its layer (blend only on a layer change), edges wrap / block,
+##      the two-line drift preview, constant winds with labels, pickups that hang still
 ##   4. hazards: touching one ends the attempt, god mode ignores it, gaps are left alone
-##   5. propane: each hop up costs hop_fuel, an empty tank allows no more hops up (drops are free) and a landing ends the run,
+##   5. propane: drains only while burning, an empty tank kills the burner and a landing ends the run,
 ##      pickups refill (capped) with a pooled burst
 ##   6. Flights: five legs on ONE tank (propane carries over), leg score, a failed leg ends the Flight (coins
 ##      kept), finishing awards 1-3 stars and coins, same seed = same Flight, floating coins, stars progress HUD
@@ -61,8 +60,8 @@ func make_main() -> Node:
 	root.add_child(m)
 	return m
 
-## Run the simulation for secs (the third argument is left over from the burner days and ignored).
-func step(m: Node, secs: float, _unused: int) -> void:
+func step(m: Node, secs: float, hold: int) -> void:
+	m.burn_override = hold
 	var n := int(round(secs * 60.0))
 	for i in n:
 		m.sim(1.0 / 60.0)
@@ -240,184 +239,136 @@ func _run() -> void:
 	check(fx_live == 0, "pre-warm sparks cleared")
 	m.set_process(false)
 
-	# ---- 3. balloon: swipe lanes ----
-	print("3. balloon: swipe up / down hops one layer; fixed hop time, easing, no momentum, bob, exact wind, edges")
+	# ---- 3. balloon: hold to burn, buoyancy with lag, capped speeds, exact wind ----
+	print("3. balloon: burner, halved buoyancy lag, speed caps, ground, exact wind, edges")
 	m.start_flight(0)
-	calm(m)
+	clear_sky(m)
 	var b = m.balloon
-	var lanes = m.lanes
-	lanes.lane_wind.fill(0.0)
-	check(b.on_ground and is_equal_approx(b.position.y, b.floor_y()) and is_equal_approx(b.position.x, LanesS.W * 0.5), "starts resting on the ground, in the middle")
-	check(m.hud.stamp_label.text.find("controls") < 0, "no control scheme is shown any more (lanes is the only one)")
-	var fuel_a: float = m.fuel
-	check(not m.swipe(Vector2(0.0, 120.0)), "a swipe down on the ground has nowhere to go")
-	check(not m.swipe(Vector2(5.0, -20.0)), "a swipe shorter than swipe_min_px is ignored")
-	check(not m.swipe(Vector2(300.0, -60.0)), "...and so is a mostly sideways one")
-	check(m.swipe(Vector2(40.0, -50.0)) and b.hopping, "a short, slightly slanted swipe up starts a hop (forgiving)")
-	step(m, 0.1, 0)
-	var frac: float = (b.floor_y() - b.position.y) / (b.floor_y() - b.level_y(0))
-	check(absf(frac - 0.198) < 0.02, "the hop is eased: slow start (%.2f of the way after 0.1 of 0.35 s)" % frac)
-	step(m, 0.3, 0)
-	check(not b.hopping and absf(b.position.y - b.level_y(0)) < 8.0 and absf(b.rest_y() - b.level_y(0)) < 0.001, "it arrives at the layer's centre in hop_time")
-	var bob_seen := 0.0
-	var b_y: float = b.position.y
-	for i in 40:
-		step(m, 1.0 / 60.0, 0)
-		bob_seen = maxf(bob_seen, absf(b.position.y - b.level_y(0)))
-	check(bob_seen > 1.0 and bob_seen <= tn.bob_amp + 0.1, "settling into the layer gives a slight bob (%.1f px)" % bob_seen)
-	step(m, 1.5, 0)
-	check(absf(b.position.y - b.level_y(0)) < 0.05 and b.rise == 0.0, "...which dies away: it rests exactly on the layer, no momentum (rise %.1f)" % b.rise)
-	check(absf((fuel_a - m.fuel) - tn.hop_fuel) < 0.01, "a hop up costs hop_fuel (%.1f)" % (fuel_a - m.fuel))
-	fuel_a = m.fuel
-	check(m.hop(1) and m.hop(1) and m.hop(1), "swipes during a hop are accepted...")
-	step(m, 2.0 * tn.hop_time + 0.1, 0)
-	check(absf(b.rest_y() - b.level_y(2)) < 0.001 and not b.hopping, "...but at most ONE more hop is queued (two layers, not three)")
-	check(absf((fuel_a - m.fuel) - 2.0 * tn.hop_fuel) < 0.01, "...and each hop up paid once (%.1f)" % (fuel_a - m.fuel))
-	fuel_a = m.fuel
-	check(m.hop(-1) and b.hop_dir == -1, "a swipe down drops a layer")
-	step(m, 0.5, 0)
-	check(absf(b.rest_y() - b.level_y(1)) < 0.001 and m.fuel == fuel_a, "...for free")
-	# real events: a touch that swipes, a tap that does not, the mouse, the keys
-	var tev := InputEventScreenTouch.new()
-	tev.pressed = true
-	tev.position = Vector2(300.0, 1000.0)
-	m._input(tev)
-	var dev := InputEventScreenDrag.new()
-	dev.position = Vector2(305.0, 1000.0 - tn.swipe_min_px - 4.0)
-	m._input(dev)
-	step(m, 0.5, 0)
-	check(absf(b.rest_y() - b.level_y(2)) < 0.001, "a touch dragged up (anywhere on the screen) hops up")
-	tev = InputEventScreenTouch.new()
-	tev.pressed = false
-	m._input(tev)
-	tev = InputEventScreenTouch.new()
-	tev.pressed = true
-	tev.position = Vector2(300.0, 300.0)
-	m._input(tev)
-	tev = InputEventScreenTouch.new()
-	tev.pressed = false
-	tev.position = Vector2(300.0, 300.0)
-	m._input(tev)
-	step(m, 0.5, 0)
-	check(absf(b.rest_y() - b.level_y(2)) < 0.001, "a plain tap (top or bottom) does nothing any more")
-	tev = InputEventScreenTouch.new()
-	tev.pressed = true
-	tev.position = Vector2(300.0, 1000.0)
-	m._input(tev)
-	dev = InputEventScreenDrag.new()
-	dev.position = Vector2(300.0, 1000.0 + 60.0)
-	m._input(dev)
-	var dev2 := InputEventScreenDrag.new()
-	dev2.position = Vector2(300.0, 1000.0 + 200.0)
-	m._input(dev2)
-	step(m, 0.5, 0)
-	check(absf(b.rest_y() - b.level_y(1)) < 0.001, "a long drag down is ONE hop down (one hop per swipe)")
-	tev = InputEventScreenTouch.new()
-	tev.pressed = false
-	m._input(tev)
-	var kev := InputEventKey.new()
-	kev.keycode = KEY_UP
-	kev.pressed = true
-	m._input(kev)
-	step(m, 0.5, 0)
-	check(absf(b.rest_y() - b.level_y(2)) < 0.001, "the Up key hops up too (desktop)")
-	m.fuel = 0.0
-	check(not m.hop(1) and m.hop(-1), "no propane: no hop up, but a hop down is free")
-	step(m, 0.5, 0)
-	m.fuel = 50.0
-	lanes.th_count = 1
-	lanes.th_x[0] = b.position.x
-	fuel_a = m.fuel
-	check(m.hop(1), "(thermal)")
-	step(m, 0.5, 0)
-	check(m.fuel == fuel_a, "a hop up from inside a thermal is free")
-	lanes.th_count = 0
-	b.set_altitude(b.level_y(lanes.n_lanes - 1))
-	b.ceiling_y = b.level_y(lanes.n_lanes - 1) + 5.0
-	check(not b.can_hop(1) and not m.hop(1), "the ceiling of an unfinished goal blocks the hop above the top layer")
-	b.ceiling_y = -100000.0
-	# effects
-	m.fuel = 50.0
-	b.set_altitude(b.level_y(1))
-	var plays0: int = m.sfx.plays
-	lanes.clear_fx()
-	m.hop(1)
-	step(m, 1.0 / 60.0, 0)
-	var live_up := 0
-	for f in LanesS.FX_MAX:
-		if lanes.fx_life[f] > 0.0:
-			live_up += 1
-	check(b.heat > 0.5 and live_up > 0 and m.sfx.plays == plays0 + 1, "a hop up: a burner flame burst, sparks and a sound (heat %.1f, %d sparks)" % [b.heat, live_up])
+	check(b.on_ground and is_equal_approx(b.position.y, b.floor_y()), "starts resting on the ground")
+	check(is_equal_approx(b.position.x, LanesS.W * 0.5), "...in the middle")
+	check(tn.buoyancy_lag >= 4.0 and tn.heat_rate >= 3.6 and tn.cool_rate >= 2.2, "the response is twice as quick as the original (lag %.1f, heat %.1f, cool %.1f)" % [tn.buoyancy_lag, tn.heat_rate, tn.cool_rate])
+	step(m, 0.15, 1)
+	var early: float = b.rise
+	check(b.burning and b.heat > 0.0 and b.heat < 0.7, "burner spools up (heat %.2f after 0.15 s)" % b.heat)
+	check(early < tn.climb_speed * 0.3, "buoyancy lag: climb is slow at first (%.0f px/s)" % early)
+	var y_a: float = b.position.y
+	var t90 := -1.0
+	var t_run := 0.15
+	for i in 240:
+		step(m, 1.0 / 60.0, 1)
+		t_run += 1.0 / 60.0
+		if t90 < 0.0 and b.rise >= tn.climb_speed * 0.9:
+			t90 = t_run
+	check(t90 > 0.4 and t90 < 1.6, "reaches 90%% of the climb speed in %.2f s: weighty, not sluggish (the original needed about 2.6 s)" % t90)
+	check(b.position.y < y_a - 200.0 and b.rise > tn.climb_speed * 0.9, "holding rises, up to near climb_speed (%.0f)" % b.rise)
+	var y_peak: float = b.position.y
+	step(m, 0.25, 0)
+	check(b.rise > 0.0 and b.position.y < y_peak, "released: keeps rising a moment (lag)")
+	step(m, 4.0, 0)
+	check(b.rise < 0.0 and absf(b.rise + tn.sink_speed) < 12.0, "...then settles into a slow sink (%.0f px/s)" % b.rise)
+	var y_s: float = b.position.y
 	step(m, 1.0, 0)
-	check(b.heat == 0.0, "...the flame dies again")
-	lanes.clear_fx()
-	m.hop(-1)
-	step(m, 1.0 / 60.0, 0)
-	var live_dn := 0
-	for f in LanesS.FX_MAX:
-		if lanes.fx_life[f] > 0.0:
-			live_dn += 1
-	check(live_dn > 0 and m.sfx.plays == plays0 + 2 and b.heat == 0.0, "a hop down: a vent puff and a sound, no flame")
-	step(m, 1.0, 0)
+	check(absf((b.position.y - y_s) - tn.sink_speed) < 15.0, "sink distance matches sink_speed")
+	step(m, 30.0, 0)
+	check(b.on_ground and is_equal_approx(b.position.y, b.floor_y()), "sinks back to the ground and stops there")
+	check(absf(b.vx) < 0.01, "tethered on the ground: no drift")
+	# Speed caps: whatever the settings ask, the balloon never runs away.
+	var keep_climb: float = tn.climb_speed
+	var keep_sink: float = tn.sink_speed
+	tn.climb_speed = 2000.0
+	tn.sink_speed = 2000.0
+	b.set_altitude(900.0)
+	var top_rise := 0.0
+	for i in 120:
+		b.step(1.0 / 60.0, true, true, 0.0, 1.0)
+		b.position.y = 900.0
+		top_rise = maxf(top_rise, b.rise)
+	check(top_rise <= tn.max_climb_speed + 0.01 and top_rise > tn.max_climb_speed - 1.0, "climb is capped at max_climb_speed (%.0f)" % top_rise)
+	var low_rise := 0.0
+	for i in 120:
+		b.step(1.0 / 60.0, false, true, 0.0, 1.0)
+		b.position.y = 900.0
+		low_rise = minf(low_rise, b.rise)
+	check(low_rise >= -tn.max_sink_speed - 0.01 and low_rise < -tn.max_sink_speed + 1.0, "sink is capped at max_sink_speed (%.0f)" % low_rise)
+	b.step(1.0 / 60.0, true, true, 5000.0, 1.0)
+	check(b.rise <= tn.max_climb_speed + 0.01, "...even in a huge updraft")
+	tn.climb_speed = keep_climb
+	tn.sink_speed = keep_sink
 	# Wind: the balloon's sideways speed is EXACTLY its layer's wind (blending only when it changes layer).
-	b.set_altitude(b.level_y(3))
-	b.vx = 0.0
+	var lanes = m.lanes
+	m.start_flight(0)
+	clear_sky(m)
+	b = m.balloon
 	lanes.lane_wind[3] = 120.0
 	lanes.lane_wind[4] = -90.0
+	var cy3: float = LanesS.BAND_BOTTOM - 3.5 * lanes.lane_h
+	var cy4: float = LanesS.BAND_BOTTOM - 4.5 * lanes.lane_h
+	var x0: float = b.position.x
+	b.set_altitude(cy3)
 	var vmid := 0.0
 	for i in 8:
-		b.step(1.0 / 60.0, true)
+		b.step(1.0 / 60.0, false, true)
+		b.set_altitude(cy3)
 		vmid = b.vx
 	check(vmid > 0.0 and vmid < 120.0, "a layer change blends the wind in (vx %.0f after 0.13 s)" % vmid)
 	for i in 30:
-		b.step(1.0 / 60.0, true)
-	check(b.vx == 120.0, "...then the sideways speed IS the layer's wind exactly (%.3f)" % b.vx)
+		b.step(1.0 / 60.0, false, true)
+		b.set_altitude(cy3)
+	check(b.vx == 120.0, "...then the sideways speed IS the layer's wind exactly (%.3f), no pickup lag" % b.vx)
 	var xs3: float = b.position.x
 	for i in 60:
-		b.step(1.0 / 60.0, true)
+		b.step(1.0 / 60.0, false, true)
+		b.set_altitude(cy3)
 	check(absf((b.position.x - xs3) - 120.0) < 0.01, "1 s in the layer moves exactly 120 px")
-	b.request_hop(1, true)
-	for i in 12:
-		b.step(1.0 / 60.0, true)
-	var mid_vx: float = b.vx
+	check(lanes.lane_of(cy4) == 4 and lanes.wind_at(cy4) < 0.0, "layer lookup by height")
 	for i in 60:
-		b.step(1.0 / 60.0, true)
-	check(mid_vx != -90.0 and mid_vx != 120.0 and b.vx == -90.0, "...blending only across a layer change (%.0f -> %.0f)" % [mid_vx, b.vx])
-	check(lanes.lane_of(b.rest_y()) == 4 and lanes.wind_at(b.rest_y()) < 0.0, "layer lookup by height")
+		b.step(1.0 / 60.0, false, true)
+		b.set_altitude(cy4)
+	check(b.vx == -90.0, "a layer blowing the other way reverses the drift exactly (vx %.0f)" % b.vx)
 	# Edges
 	var half: float = BalloonS.WIDTH * 0.5 * b.s()
 	tn.edge_wrap = true
 	b.position.x = -half + 1.0
-	b.step(1.0 / 30.0, true)
+	b.vx = -90.0
+	b.step(1.0 / 30.0, false, true)
 	check(b.position.x > LanesS.W * 0.9, "edges wrap: leaves left, returns on the right")
 	tn.edge_wrap = false
 	b.position.x = half + 1.0
 	b.vx = -90.0
-	b.step(1.0 / 30.0, true)
+	b.step(1.0 / 30.0, false, true)
 	check(is_equal_approx(b.position.x, half) and b.vx >= 0.0, "edges block when edge_wrap is off")
 	tn.edge_wrap = true
-	# --- the drift preview ---
+	# --- the drift preview: two lines ---
 	m.start_flight(0)
 	calm(m)
 	b = m.balloon
 	lanes = m.lanes
 	lanes.lane_wind.fill(100.0)
-	b.set_altitude(b.level_y(1))
-	b.request_hop(1, true)
-	for i in 6:
-		b.step(1.0 / 60.0, true)
-	b.predict()
-	var end_pred: Vector2 = b.pred[BalloonS.PRED_N - 1]
-	check(is_equal_approx(end_pred.y, b.hop_y1) and b.pred[0].y > b.hop_y1 and b.pred[0].y < b.rest_y() + 0.01, "preview: follows the hop in progress and ends on the target layer")
-	var p0: Vector2 = b.position
+	b.set_altitude(LanesS.BAND_BOTTOM - 2.5 * lanes.lane_h)
+	b.vx = 100.0
+	b.predict(true)
+	var pv_pb: Vector2 = b.pred_burn[BalloonS.PRED_N - 1]
+	var pv_pr: Vector2 = b.pred_rel[BalloonS.PRED_N - 1]
+	check(pv_pb.y < b.position.y - 100.0 and pv_pr.y > b.position.y and pv_pb.y < pv_pr.y - 150.0, "preview: keep burning climbs (%.0f px), release sinks (%.0f px)" % [b.position.y - pv_pb.y, pv_pr.y - b.position.y])
+	check(absf(pv_pb.x - (b.position.x + 150.0)) < 6.0, "...both drift with the wind (%.0f px in 1.5 s)" % (pv_pb.x - b.position.x))
+	b.predict(false)
+	check(b.pred_burn[BalloonS.PRED_N - 1].is_equal_approx(b.pred_rel[BalloonS.PRED_N - 1]) or b.pred_burn[BalloonS.PRED_N - 1].y > b.position.y - 1.0, "with an empty tank the burn line is the release line")
+	b.predict(true)
+	var pv_p_start: Vector2 = b.position
 	for i in 90:
-		b.step(1.0 / 60.0, true)
-	check(absf(end_pred.x - b.position.x) < 4.0, "preview: the dotted path ends where the balloon is 1.5 s later (off by %.1f px)" % absf(end_pred.x - b.position.x))
-	b.set_altitude(b.level_y(1))
-	b.request_hop(1, true)
-	b.request_hop(1, true)
-	b.predict()
-	check(is_equal_approx(b.pred[BalloonS.PRED_N - 1].y, b.level_y(3)), "preview: includes the one queued hop")
+		b.step(1.0 / 60.0, true, true)
+	check(pv_pb.distance_to(b.position) < 8.0, "preview (burn): ends where a held burner really takes the balloon in 1.5 s (off by %.1f px)" % pv_pb.distance_to(b.position))
+	b.set_altitude(LanesS.BAND_BOTTOM - 2.5 * lanes.lane_h)
+	b.predict(true)
+	pv_pr = b.pred_rel[BalloonS.PRED_N - 1]
+	for i in 90:
+		b.step(1.0 / 60.0, false, true)
+	check(pv_pr.distance_to(b.position) < 8.0, "preview (release): ends where a released burner really leaves it (off by %.1f px)" % pv_pr.distance_to(b.position))
+	b.set_altitude(LanesS.BAND_BOTTOM - 2.5 * lanes.lane_h)
+	b.anchor_left = 5.0
+	b.predict(true)
+	check(absf(b.pred_burn[BalloonS.PRED_N - 1].x - b.position.x) < 0.01 and b.pred_burn[BalloonS.PRED_N - 1].y < b.position.y - 100.0, "preview: an anchored balloon does not drift but the burner line still climbs")
+	b.anchor_left = 0.0
 	# Ghost hazards: where each hazard will be in preview_seconds.
 	m.start_flight(7)
 	b = m.balloon
@@ -434,16 +385,16 @@ func _run() -> void:
 	var cs_gdx := absf(fposmod(lanes.hz_x[cs_gi * LanesS.MAX_PER_LANE] - cs_gx_pred + LanesS.RING * 0.5, LanesS.RING) - LanesS.RING * 0.5)
 	check(cs_gdx < 0.5, "ghost hazards: a hazard really is where its ghost said (off by %.2f px)" % cs_gdx)
 	lanes.preview_balloon = b
-	b.predict()
+	b.predict(true)
 	lanes.update(1.0 / 60.0)
 	var hz_ghosts := 0
 	for i in lanes.n_lanes:
 		if lanes.lane_kind[i] >= 0:
 			hz_ghosts += lanes.lane_count[i]
-	check(lanes.render._pv_dots.visible and lanes.render._pv_ghosts.visible and lanes.render._pv_ghosts.multimesh.visible_instance_count == hz_ghosts and hz_ghosts > 0, "the preview draws its dots and one ghost per hazard (%d)" % hz_ghosts)
+	check(lanes.render._pv_dots.visible and lanes.render._pv_dots2.visible and lanes.render._pv_ghosts.visible and lanes.render._pv_ghosts.multimesh.visible_instance_count == hz_ghosts and hz_ghosts > 0, "the preview draws its dots and one ghost per hazard (%d)" % hz_ghosts)
 	DebugFlags.parse(["preview=off"])
 	m.sim(1.0 / 60.0)
-	check(lanes.preview_balloon == null and not lanes.render._pv_dots.visible and not lanes.render._pv_ghosts.visible, "?preview=off hides it")
+	check(lanes.preview_balloon == null and not lanes.render._pv_dots.visible and not lanes.render._pv_dots2.visible and not lanes.render._pv_ghosts.visible, "?preview=off hides it")
 	DebugFlags.parse([])
 	m.sim(1.0 / 60.0)
 	check(lanes.preview_balloon == b and lanes.render._pv_dots.visible, "...and it is back without the flag")
@@ -564,23 +515,15 @@ func _run() -> void:
 	b = m.balloon
 	check(is_equal_approx(m.fuel, tn.propane_start), "run starts with a full tank")
 	step(m, 1.0, 0)
-	check(is_equal_approx(m.fuel, tn.propane_start), "no hop, no drain")
-	m.hop(1)
-	step(m, 1.0, 0)
-	check(absf(m.fuel - (tn.propane_start - tn.hop_fuel)) < 0.01, "each hop up burns hop_fuel (%.1f used)" % (tn.propane_start - m.fuel))
-	m.fuel = 1.0
-	b.set_altitude(b.level_y(2))
-	m.hop(1)
-	step(m, 0.5, 0)
-	m.hop(1)
-	step(m, 0.5, 0)
-	check(m.fuel == 0.0 and absf(b.rest_y() - b.level_y(3)) < 0.001, "an empty tank: the last hop goes, then no more hops up")
-	m.hop(-1)
-	step(m, 0.5, 0)
-	check(m.screen == MainS.SCREEN_PLAY and absf(b.rest_y() - b.level_y(2)) < 0.001, "...but it can still drop (free)")
-	for i in 8:
-		m.hop(-1)
-		step(m, 0.5, 0)
+	check(is_equal_approx(m.fuel, tn.propane_start), "no burn, no drain")
+	step(m, 1.0, 1)
+	check(absf(m.fuel - (tn.propane_start - tn.burn_rate)) < 0.5, "burner drains burn_rate per second (%.1f)" % m.fuel)
+	m.fuel = 2.0
+	b.set_altitude(LanesS.BAND_BOTTOM - 2.5 * m.lanes.lane_h)
+	step(m, 1.5, 1)
+	check(m.fuel == 0.0 and not b.burning, "empty tank: the burner dies")
+	check(m.screen == MainS.SCREEN_PLAY and b.rise < 100.0, "...and the balloon starts to sink")
+	step(m, 60.0, 1)
 	check(m.screen == MainS.SCREEN_DEAD and m.last_reason.begins_with("Out of propane"), "landing with an empty tank ends the run")
 	# Pickups
 	m.start_flight(0)
@@ -659,7 +602,6 @@ func _run() -> void:
 	clear_sky(m)
 	step(m, 1.0, 0)
 	check(m.leg_time == 0.0 and not m.leg_started, "the leg clock waits on the ground")
-	m.hop(1)
 	step(m, 1.0, 1)
 	check(m.leg_started and m.leg_time > 0.0, "...and starts when the balloon lifts off")
 	# Failing a leg ends the whole Flight; coins earned so far are kept.
@@ -864,18 +806,19 @@ func _run() -> void:
 	var tx: float = m.lanes.th_x[0]
 	check(absf(m.lanes.thermal_lift(tx) - tn.thermal_lift) < 1.0 and m.lanes.thermal_lift(tx + tn.thermal_width + 5.0) < 1.0 or m.lanes.th_count > 1, "a thermal lifts at its centre, not outside")
 	var b1 = m.balloon
-	b1.reset()
-	b1.lanes = m.lanes
-	b1.set_altitude(b1.level_y(1))
-	var th_free := 0
-	for pass_i in 2:   # a hop up from outside a thermal costs a hop, from inside it is free
-		b1.paid_hops = 0
-		m.lanes.th_x[0] = b1.position.x if pass_i == 1 else b1.position.x + 400.0
-		b1.set_altitude(b1.level_y(1))
-		b1.request_hop(1, true)
-		th_free = b1.paid_hops if pass_i == 0 else th_free
-		if pass_i == 1:
-			check(th_free == 1 and b1.paid_hops == 0, "inside a thermal a hop up costs no propane (outside: %d hop paid)" % th_free)
+	var rise_no := 0.0
+	var rise_yes := 0.0
+	for pass_i in 2:
+		b1.reset()
+		b1.set_altitude(900.0)
+		for i in 240:
+			b1.step(1.0 / 60.0, false, true, 0.0 if pass_i == 0 else tn.thermal_lift, 1.0)
+			b1.position.y = 900.0
+		if pass_i == 0:
+			rise_no = b1.rise
+		else:
+			rise_yes = b1.rise
+	check(rise_yes > rise_no + tn.thermal_lift * 0.8, "inside a thermal the balloon rises (%.0f vs %.0f px/s)" % [rise_yes, rise_no])
 	m.lanes.focus_lane = 3
 	check(m.lanes.haze_alpha(3) == 0.0 and m.lanes.haze_alpha(4) == 0.0 and m.lanes.haze_alpha(2) == 0.0, "haze: the layers next to the balloon are clear")
 	check(absf(m.lanes.haze_alpha(5) - tn.haze_per_lane) < 0.001 and m.lanes.haze_alpha(6) > m.lanes.haze_alpha(5) and m.lanes.haze_alpha(8) <= tn.haze_max + 0.001, "...and further layers fade into haze, up to a cap")
@@ -886,12 +829,19 @@ func _run() -> void:
 	var nl: int = m.lanes.n_lanes
 	check(m.lanes.thin_air and m.lanes.lane_kind[nl - 1] == LanesS.GLIDER and m.lanes.lane_count[nl - 1] > 0 and absf(m.lanes.lane_base[nl - 1]) == tn.jet_wind, "Himalayas: the top layer is a fast jet stream with paragliders")
 	check(m.lanes.climb_mult_at(LanesS.BAND_BOTTOM) == 1.0 and absf(m.lanes.climb_mult_at(LanesS.GOAL_Y) - (1.0 - tn.thin_air_loss)) < 0.001, "thin air: full burner low down, weaker at the top")
-	b1.reset()
-	b1.paid_hops = 1
-	var cost_full: float = b1.take_fuel_cost(1.0)
-	b1.paid_hops = 1
-	var cost_thin: float = b1.take_fuel_cost(1.0 - tn.thin_air_loss)
-	check(absf(cost_full - tn.hop_fuel) < 0.01 and cost_thin > cost_full * 1.5, "thin air makes a hop up cost more propane (%.1f vs %.1f)" % [cost_thin, cost_full])
+	var rise_thin := 0.0
+	var rise_full := 0.0
+	for pass_i in 2:
+		b1.reset()
+		b1.set_altitude(900.0)
+		for i in 300:
+			b1.step(1.0 / 60.0, true, true, 0.0, 1.0 if pass_i == 0 else 1.0 - tn.thin_air_loss)
+			b1.position.y = 900.0
+		if pass_i == 0:
+			rise_full = b1.rise
+		else:
+			rise_thin = b1.rise
+	check(rise_thin < rise_full * 0.75, "thin air weakens the climb (%.0f vs %.0f px/s)" % [rise_thin, rise_full])
 	var jet_other := 0
 	for r in 3:
 		for seed_i in 20:
@@ -1296,7 +1246,6 @@ func _run() -> void:
 	step(m, 0.05, 0)
 	check(not m.hud.boost_btn.visible, "at most %d boosts per Flight" % int(tn.ad_boost_max_per_flight))
 	m.boosts_used = 0
-	m.hop(1)
 	step(m, 1.0, 1)
 	check(m.leg_started and not m.hud.boost_btn.visible, "the boost is only offered before lift-off")
 	# Rewarded: retry the leg.
@@ -1489,9 +1438,10 @@ func _run() -> void:
 	var body_draws: int = m.balloon.body_draws
 	var fx_draws: int = m.lanes.render.fx.draws
 	m.set_process(true)
-	m.balloon.set_altitude(m.balloon.level_y(1))
+	m.burn_override = 1
 	await real_wait(1.0)
 	m.set_process(false)
+	m.burn_override = 0
 	check(m.lanes.render.backdrop.draws == bd_draws and m.balloon.body_draws == body_draws and m.lanes.render.fx.draws == fx_draws, "no per-frame redraw of the backdrop, the balloon body or the sparks while flying")
 	m.lanes.burst(Vector2(500, 900), Color.RED, 8, 200.0)
 	m.lanes.update(1.0 / 60.0)
@@ -1708,7 +1658,7 @@ func _run() -> void:
 	m.leg_time = tn.storm_start_delay
 	step(m, 1.0, 0)
 	check(absf((storm0 - m.lanes.storm_y) - tn.storm_speed * 1.0) < 3.0, "then it rises at its set pace (%.0f px/s)" % tn.storm_speed)
-	var min_climb: float = float(m.lanes.n_lanes + 1) * tn.hop_time
+	var min_climb: float = (LanesS.BAND_BOTTOM - LanesS.GOAL_Y) / tn.climb_speed
 	var storm_time: float = (LanesS.GROUND_Y + 160.0 - LanesS.GOAL_Y) / (tn.storm_speed + tn.storm_speed_per_leg * 4.0)
 	check(storm_time > 3.0 * min_climb, "fair: even on the last leg the storm takes %.0f s to reach the top (a straight climb: %.0f s)" % [storm_time, min_climb])
 	m.lanes.storm_y = m.balloon.position.y + 20.0
@@ -1748,31 +1698,41 @@ func _run() -> void:
 	m.lanes.update(0.5)
 	check(absf(absf(m.lanes.ship_x - sx1) - tn.airship_speed * 0.5) < 1.0 or absf(m.lanes.ship_x - sx1) < tn.airship_speed * 0.5 + 1.0, "...slowly (%.0f px/s)" % tn.airship_speed)
 	# no goal strip, a higher ceiling
-	m.balloon.set_altitude(m.balloon.level_y(m.lanes.n_lanes - 1))
-	m.balloon.position.x = 540.0
-	m.balloon.on_ground = false
-	m.fuel = 80.0
+	m.balloon.position = Vector2(540.0, 400.0)
+	m.balloon.rise = 300.0
+	m.balloon.heat = 1.0
 	m.lanes.ship_x = 200.0
-	m.hop(1)
-	step(m, 1.0, 1)
-	check(m.screen == MainS.SCREEN_PLAY and m.balloon.rest_y() >= LanesS.CEILING_Y - 0.5 and m.balloon.rest_y() < LanesS.GOAL_Y, "the balloon may hop above the goal strip here, to the sky over the airship; reaching the top is not the goal")
+	step(m, 1.5, 1)
+	check(m.screen == MainS.SCREEN_PLAY and m.balloon.position.y >= LanesS.CEILING_Y - 0.5 and m.balloon.position.y < LanesS.GOAL_Y, "the balloon may fly above the goal strip here, up to the ceiling; reaching the top is not the goal")
 	# the hull blocks from below
 	m.lanes.ship_dir = 0.0
 	m.lanes.ship_x = 540.0
-	m.balloon.set_altitude(m.balloon.level_y(m.lanes.n_lanes - 1))
-	m.balloon.position.x = 540.0
-	m.balloon.on_ground = false
-	m.fuel = 80.0
-	m.hop(1)
-	step(m, 1.0, 1)
-	check(m.screen == MainS.SCREEN_PLAY and m.balloon.position.y > LanesS.SHIP_DECK_Y + LanesS.SHIP_HULL_H and not m.balloon.hopping, "the hull is solid from below: the hop up is stopped under it, the balloon is not hurt")
+	m.balloon.position = Vector2(540.0, 500.0)
+	m.balloon.rise = 300.0
+	m.balloon.heat = 1.0
+	step(m, 1.5, 1)
+	check(m.screen == MainS.SCREEN_PLAY and m.balloon.position.y > LanesS.SHIP_DECK_Y + LanesS.SHIP_HULL_H, "the hull is solid from below: the balloon is held under it, not hurt")
 	# landing slowly on the deck
-	m.balloon.set_altitude(m.balloon.level_y(m.lanes.n_lanes))
-	m.balloon.position.x = m.lanes.ship_x + 40.0
+	m.balloon.position = Vector2(m.lanes.ship_x + 40.0, LanesS.SHIP_DECK_Y - 84.0 * m.balloon.s() - 12.0)
+	m.balloon.rise = -60.0
+	m.balloon.heat = 0.0
+	step(m, 0.3, 0)
+	check(m.screen == MainS.SCREEN_CLEAR, "touching down on the deck slowly clears the leg")
+	# a hard landing (only a Quick Vent descent is fast enough)
+	m.start_flight(0)
+	m.recipe = mkr.call(4)
+	m.lanes.setup(3.0, false, 99, 0, m.recipe)
+	m.balloon.reset()
+	clear_sky(m)
+	m.screen = MainS.SCREEN_PLAY
+	m.leg_started = true
 	m.balloon.on_ground = false
-	m.hop(-1)
-	step(m, 0.5, 0)
-	check(m.screen == MainS.SCREEN_CLEAR, "hopping down from the sky above the airship onto its deck clears the leg (always a gentle touch-down)")
+	m.lanes.ship_dir = 0.0
+	m.balloon.position = Vector2(m.lanes.ship_x, LanesS.SHIP_DECK_Y - 84.0 * m.balloon.s() - 2.0)
+	m.balloon.rise = -(tn.land_speed + 60.0)
+	step(m, 0.05, 0)
+	check(m.screen == MainS.SCREEN_DEAD and m.last_reason.begins_with("Hard landing"), "touching down too fast is a hard landing")
+	check(tn.sink_speed < tn.land_speed and tn.max_sink_speed > tn.land_speed, "...which suits the physics: the plain sink is gentle, only a Quick Vent plunge (up to the cap) is too fast")
 	# missing the deck
 	m.start_flight(0)
 	m.recipe = mkr.call(4)
@@ -1809,86 +1769,107 @@ func _run() -> void:
 	m.start_flight(7)
 	check(not m.hud.hint_label.visible, "...and only the first time")
 	check(m.hud.tool_btns[0].text == "SANDBAG  x2", "the button shows its charges")
-	# Sandbag: an instant two-layer hop up, no propane, limited per leg.
+	# Sandbag: an instant climb burst, no propane, limited per leg.
 	calm(m)
-	var tb6 = m.balloon
-	var tl6 = m.lanes
-	tl6.lane_wind.fill(0.0)
+	m.balloon.on_ground = false
 	m.leg_started = true
-	tb6.set_altitude(tb6.level_y(0))
-	m.fuel = 60.0
-	check(m.use_tool(0), "the Sandbag can be dropped")
-	step(m, 0.5, 0)
-	check(absf(tb6.rest_y() - tb6.level_y(2)) < 0.001 and m.fuel == 60.0, "...an instant hop up two layers (layer %d), costing no propane" % tl6.lane_of(tb6.rest_y()))
+	var y_plain := 0.0
+	var y_bag := 0.0
+	var fuel_bag_before := 0.0
+	for pass_i in 2:
+		m.balloon.position = Vector2(540.0, 1000.0)
+		m.balloon.rise = 0.0
+		m.balloon.heat = 0.0
+		m.lanes.lane_wind[3] = 0.0
+		m.fuel = 60.0
+		if pass_i == 1:
+			check(m.use_tool(0), "the Sandbag can be dropped")
+			check(is_equal_approx(m.balloon.rise, tn.sandbag_boost), "...for an instant climb burst (%.0f px/s)" % m.balloon.rise)
+		step(m, 1.0, 0)
+		if pass_i == 0:
+			y_plain = m.balloon.position.y
+		else:
+			y_bag = m.balloon.position.y
+			check(m.fuel == 60.0, "...which costs no propane")
+	check(y_bag < y_plain - 120.0, "the burst carries the balloon higher (%.0f px)" % (y_plain - y_bag))
+	m.balloon.rise = 300.0
+	m.tool_charges[0] = 2
+	m.use_tool(0)
+	check(m.balloon.rise <= tn.max_climb_speed + 0.01, "a Sandbag on top of a fast climb still respects the cap (%.0f)" % m.balloon.rise)
 	check(m.tool_charges[0] == 1 and m.hud.tool_btns[0].text == "SANDBAG  x1" and not m.hud.tool_btns[0].disabled, "one charge left")
-	tb6.set_altitude(tb6.level_y(tl6.n_lanes - 3))
-	tb6.ceiling_y = tb6.level_y(tl6.n_lanes - 2) - 5.0
 	check(m.use_tool(0) and m.tool_charges[0] == 0 and m.hud.tool_btns[0].disabled, "the second one is the last: the button greys out")
-	step(m, 0.5, 0)
-	check(absf(tb6.rest_y() - tb6.level_y(tl6.n_lanes - 2)) < 0.001, "with only one layer of room it hops that one")
 	check(not m.use_tool(0), "no charges left: it does nothing")
-	tb6.ceiling_y = -100000.0
 	m.start_flight(7)
 	check(m.tool_charges[0] == 2, "charges come back with every Flight / leg")
-	calm(m)
-	m.balloon.set_altitude(m.balloon.level_y(m.lanes.n_lanes - 1))
-	m.balloon.ceiling_y = m.balloon.level_y(m.lanes.n_lanes - 1) + 5.0
-	check(not m.use_tool(0) and m.tool_charges[0] == 2, "a Sandbag with no room above is not spent")
-	m.balloon.ceiling_y = -100000.0
-	# Anchor: stop drifting, hold position in the layer.
+	# Anchor: no sideways drift for 2 s; burning still works.
 	m.start_flight(13)
 	check(m.tool_avail == [0, 1] and m.hud.tool_btns[1].visible, "Sahara 2: the Anchor appears too")
 	calm(m)
 	m.lanes.th_count = 0
+	m.balloon.on_ground = false
 	m.leg_started = true
 	var drift_free := 0.0
 	var drift_anchor := 0.0
-	var hold_y := 0.0
+	var climb_anchor := 0.0
 	for pass_i in 2:
-		m.balloon.set_altitude(m.balloon.level_y(1))
-		m.balloon.position.x = 300.0
+		m.balloon.position = Vector2(300.0, 1200.0)
 		m.balloon.vx = 0.0
+		m.balloon.rise = 0.0
+		m.balloon.heat = 0.0
 		m.balloon.anchor_left = 0.0
 		m.lanes.lane_base.fill(150.0)
 		m.lanes.lane_wind.fill(150.0)
 		if pass_i == 1:
 			m.tool_charges[1] = 1
 			check(m.use_tool(1) and m.balloon.anchor_left == tn.anchor_seconds, "the Anchor drops (%.0f s)" % m.balloon.anchor_left)
-			check(not m.hop(1), "...and the balloon holds its layer: no hopping while anchored")
 		var x_before: float = m.balloon.position.x
 		var y_before: float = m.balloon.position.y
-		step(m, 1.5, 0)
+		step(m, 1.5, 1)
 		if pass_i == 0:
 			drift_free = m.balloon.position.x - x_before
 		else:
 			drift_anchor = m.balloon.position.x - x_before
-			hold_y = m.balloon.position.y - y_before
+			climb_anchor = y_before - m.balloon.position.y
 	check(drift_free > 100.0 and absf(drift_anchor) < 0.5, "anchored, the balloon stops drifting sideways (%.1f px vs %.0f px)" % [drift_anchor, drift_free])
-	check(absf(hold_y) < 0.5, "...and stays in its layer (%.1f px)" % hold_y)
+	check(climb_anchor > 100.0, "...and the burner still lifts it (%.0f px)" % climb_anchor)
 	step(m, 2.5, 0)
 	check(m.balloon.anchor_left == 0.0, "after anchor_seconds it lets go")
 	var x_after: float = m.balloon.position.x
+	m.balloon.position.y = 1000.0
 	step(m, 1.0, 0)
 	check(m.balloon.position.x - x_after > 25.0, "...and the wind carries the balloon again")
 	m.tool_charges[1] = 1
 	m.use_tool(1)
 	check(m.tool_charges[1] == 0 and not m.use_tool(1), "one Anchor per leg")
-	# Quick Vent: an instant two-layer drop.
+	# Quick Vent: a strong descent burst.
 	m.start_flight(19)
 	check(m.tool_avail == [0, 1, 2] and m.hud.tool_btns[2].visible, "Himalayas 2: the Quick Vent appears too")
 	calm(m)
-	m.lanes.lane_wind.fill(0.0)
+	m.balloon.on_ground = false
 	m.leg_started = true
-	m.balloon.set_altitude(m.balloon.level_y(3))
-	m.fuel = 60.0
-	check(m.use_tool(2) and m.tool_charges[2] == int(tn.vent_charges) - 1, "the Quick Vent opens")
-	step(m, 0.5, 0)
-	check(absf(m.balloon.rest_y() - m.balloon.level_y(1)) < 0.001 and m.fuel == 60.0, "...an instant drop of two layers, free")
-	m.balloon.set_altitude(m.balloon.level_y(0))
-	check(m.use_tool(2), "from the bottom layer it drops the one layer left")
-	step(m, 0.5, 0)
-	check(m.balloon.on_ground, "...to the ground")
-	check(not m.use_tool(2) or m.tool_charges[2] >= 0, "(charges never go negative)")
+	var drop_plain := 0.0
+	var drop_vent := 0.0
+	var vent_min_rise := 0.0
+	for pass_i in 2:
+		m.balloon.position = Vector2(540.0, 700.0)
+		m.balloon.rise = 0.0
+		m.balloon.heat = 0.0
+		m.balloon.vent_left = 0.0
+		if pass_i == 1:
+			m.tool_charges[2] = 2
+			check(m.use_tool(2) and m.balloon.vent_left == tn.vent_seconds, "the Quick Vent opens")
+		for i in 90:
+			m.burn_override = 0
+			m.sim(1.0 / 60.0)
+			vent_min_rise = minf(vent_min_rise, m.balloon.rise)
+		if pass_i == 0:
+			drop_plain = m.balloon.position.y - 700.0
+		else:
+			drop_vent = m.balloon.position.y - 700.0
+	check(drop_vent > drop_plain * 1.8, "it descends much faster (%.0f px vs %.0f px)" % [drop_vent, drop_plain])
+	check(vent_min_rise >= -tn.max_sink_speed - 0.01, "...but never beyond max_sink_speed (%.0f)" % vent_min_rise)
+	step(m, 2.0, 0)
+	check(m.balloon.vent_left == 0.0 and absf(m.balloon.rise + tn.sink_speed) < 30.0, "then the balloon settles back into its slow sink")
 	# Charges per leg; refusals.
 	m.start_flight(19)
 	check(m.tool_charges[2] == int(tn.vent_charges) and m.tool_charges[1] == int(tn.anchor_charges) and m.tool_charges[0] == int(tn.sandbag_charges), "charges per leg from Tuning")
@@ -1898,7 +1879,7 @@ func _run() -> void:
 	m.hud.ad_active = true
 	check(not m.use_tool(0), "...and not while an ad is up")
 	m.hud.ad_active = false
-	# Touches: a second finger on a tool button works while the first is mid-swipe; the emulated mouse of a touch is skipped.
+	# Touches: a second finger on a tool button works while the first holds the burner; the emulated mouse of a touch is skipped.
 	m.start_flight(7)
 	var HudS = load("res://scripts/Hud.gd")
 	var ev := InputEventScreenTouch.new()
@@ -1931,7 +1912,7 @@ func _run() -> void:
 	ev5.position = HudS.TOOL_RECTS[2].get_center()
 	m._input(ev5)
 	check(m.tool_charges[2] == int(tn.vent_charges), "a button that is not on offer does nothing")
-	check(m._on_tool_button(HudS.TOOL_RECTS[0].get_center()) and not m._on_tool_button(HudS.TOOL_RECTS[2].get_center()) and not m._on_tool_button(Vector2(500, 900)), "a press on a tool button is not a swipe")
+	check(m._on_tool_button(HudS.TOOL_RECTS[0].get_center()) and not m._on_tool_button(HudS.TOOL_RECTS[2].get_center()) and not m._on_tool_button(Vector2(500, 900)), "a press on a tool button is not a burner hold")
 	var rects_ok := true
 	for i in 3:
 		rects_ok = rects_ok and HudS.TOOL_RECTS[i].position.y >= LanesS.GROUND_Y + 20.0 and HudS.TOOL_RECTS[i].end.x <= 1080.0
@@ -2232,8 +2213,8 @@ func _run() -> void:
 					on_hazard += 1
 	check(on_hazard == 0, "pickups float in the gaps between hazards")
 
-	# ---- 7b. fairness of every Flight with swipe lanes (analytic; tests/fairness_sim.gd searches for real paths) ----
-	print("7b. fairness with swipe lanes: propane, storm, lightning, pickups, goal objects")
+	# ---- 7b. fairness of every Flight with the burner physics (analytic; tests/fairness_sim.gd searches for real paths) ----
+	print("7b. fairness with the burner physics: propane, storm, lightning, pickups, goal objects")
 	var bal7: Node = m.balloon
 	var worst_climb := 0.0                    # propane of a straight climb
 	var worst_storm_ratio := 99.0             # time the storm needs / time of a straight climb
@@ -2251,14 +2232,16 @@ func _run() -> void:
 			var L7 = m.lanes
 			legs7 += 1
 			var n7: int = L7.n_lanes
-			# lanes: n+1 hops up (ground -> each layer centre -> the top)
-			var c_l := 0.0
-			for lv7 in range(0, n7 + 1):
-				c_l += tn.hop_fuel / L7.climb_mult_at(bal7.level_y(lv7))
-			worst_climb = maxf(worst_climb, c_l)
+			# a straight climb at full burner: the time it takes (thin air slows it) x burn_rate
+			var t_climb := 0.0
+			for q7 in 40:
+				var y7: float = lerpf(bal7.floor_y(), LanesS.GOAL_Y, (float(q7) + 0.5) / 40.0)
+				t_climb += (bal7.floor_y() - LanesS.GOAL_Y) / 40.0 / (tn.climb_speed * L7.climb_mult_at(y7))
+			t_climb += 1.0 / tn.heat_rate
+			worst_climb = maxf(worst_climb, t_climb * tn.burn_rate)
 			if L7.storm_on:
 				var storm_t: float = (LanesS.GROUND_Y + 160.0 - LanesS.GOAL_Y) / L7.storm_speed
-				worst_storm_ratio = minf(worst_storm_ratio, storm_t / (float(n7 + 1) * tn.hop_time))
+				worst_storm_ratio = minf(worst_storm_ratio, storm_t / (t_climb + 1.0 / tn.heat_rate))
 			if L7.lt_on:   # a balloon in the slowest steady layer must be able to leave the column within the warning (less 0.3 s of reaction)
 				var w_min := 1.0e9
 				for i8 in n7:
@@ -2278,30 +2261,31 @@ func _run() -> void:
 			if rec7.goal == 2:
 				for d8 in 2:
 					var dp: Vector2 = L7.dock_pos(d8)
-					if dp.x < tn.dock_half_w * 0.3 or dp.x > LanesS.W - tn.dock_half_w * 0.3 or absf(dp.y - bal7.level_y(L7.dl_lane[d8])) > tn.dock_half_h * 0.5:
+					if dp.x < tn.dock_half_w * 0.3 or dp.x > LanesS.W - tn.dock_half_w * 0.3 or absf(dp.y - L7._lane_cy(L7.dl_lane[d8])) > 0.01:
 						bad_goal += 1
 			if rec7.goal == 4 and (L7.ship_x < LanesS.SHIP_MIN_X or L7.ship_x > LanesS.SHIP_MAX_X):
 				bad_goal += 1
 	check(legs7 == 120, "all 120 legs checked (24 Flights x 5)")
-	check(worst_climb <= tn.propane_start * 0.25, "a straight climb costs at most a quarter of a tank, thin-air Himalayas legs included (%.1f of %.0f)" % [worst_climb, tn.propane_start])
-	check(worst_storm_ratio >= 4.0, "the storm needs 4x+ the time of a straight climb of hops (%.1fx)" % worst_storm_ratio)
-	check(worst_lt <= 1.0, "lightning: even the slowest steady layer carries a balloon out of the column within the warning less 0.3 s (%.0f%% of the time)" % (worst_lt * 100.0))
+	check(worst_climb <= tn.propane_start * 0.4, "a straight climb costs at most 40%% of a tank, thin-air Himalayas legs included (%.1f of %.0f)" % [worst_climb, tn.propane_start])
+	check(worst_storm_ratio >= 4.0, "the storm needs 4x+ the time of a straight climb (%.1fx)" % worst_storm_ratio)
+	check(worst_lt <= 1.0, "lightning: even the slowest layer carries a balloon out of the column within the warning less 0.3 s (%.0f%% of the time)" % (worst_lt * 100.0))
 	check(bad_items == 0, "pickups, coins and stars are always on the screen (they hang still)")
-	check(bad_goal == 0, "mooring platforms are reachable from a layer's centre; the airship stays on screen")
+	check(bad_goal == 0, "mooring platforms sit on a layer's centre line, on the screen; the airship stays on screen")
 	m.start_flight(0)
 
 	# ---- 8. restart in place ----
 	print("8. restart in place")
 	m.set_process(true)
+	m.burn_override = -1
 	var base := snap()
 	for run in 3:
 		m.start_flight(0)
 		check(m.screen == MainS.SCREEN_PLAY and m.score == 0 and m.leg == 0 and m.balloon.on_ground, "run %d starts fresh" % (run + 1))
 		check(m.hud.level_label.text.contains("LEG 1/5") and not m.hud.dead_p.visible, "run %d HUD reset" % (run + 1))
-		m.hop(1)
+		m.burn_override = 1
 		await real_wait(1.0)
 		var s0: float = m.balloon.position.y
-		check(s0 < m.balloon.floor_y() - 20.0, "run %d: the balloon hops up under real frames" % (run + 1))
+		check(s0 < m.balloon.floor_y() - 20.0, "run %d: balloon climbs under real frames" % (run + 1))
 		# Kill it on a hazard.
 		clear_sky(m)
 		m.lanes.lane_kind[2] = 1
@@ -2309,7 +2293,8 @@ func _run() -> void:
 		m.lanes.lane_scale[2] = 1.0
 		m.lanes.lane_amp[2] = 0.0
 		m.lanes.lane_vel[2] = 0.0
-		m.balloon.set_altitude(LanesS.BAND_BOTTOM - 2.5 * m.lanes.lane_h)
+		m.burn_override = 0
+		m.balloon.position.y = LanesS.BAND_BOTTOM - 2.5 * m.lanes.lane_h
 		m.balloon.on_ground = false
 		m.lanes.hz_x[2 * LanesS.MAX_PER_LANE] = m.balloon.position.x
 		await process_frame
@@ -2374,16 +2359,16 @@ func _run() -> void:
 	check(not tp.is_open, "closed at start")
 	tp.open()
 	check(tp.is_open and paused, "opening pauses the game")
-	tp._sliders["hop_time"].value = 0.5
-	check(is_equal_approx(tn.hop_time, 0.5), "a slider edits Tuning live")
-	tp._sliders["hop_fuel"].value = 6.5
+	tp._sliders["buoyancy_lag"].value = 3.5
+	check(is_equal_approx(tn.buoyancy_lag, 3.5), "a slider edits Tuning live")
+	tp._sliders["burn_rate"].value = 12.5
 	tp._toggles["edge_wrap"].button_pressed = false
-	check(is_equal_approx(tn.hop_fuel, 6.5) and tn.edge_wrap == false, "more sliders and the edge toggle")
+	check(is_equal_approx(tn.burn_rate, 12.5) and tn.edge_wrap == false, "more sliders and the edge toggle")
 	tp.copy_values()
-	check(tp.last_copied_text.contains("hop_time = 0.5") and tp.last_copied_text.contains("hop_fuel = 6.5") and tp.last_copied_text.contains("edge_wrap = false"), "Copy values lists what changed")
+	check(tp.last_copied_text.contains("buoyancy_lag = 3.5") and tp.last_copied_text.contains("burn_rate = 12.5") and tp.last_copied_text.contains("edge_wrap = false"), "Copy values lists what changed")
 	check(not tp.last_copied_text.contains("climb_speed"), "...and only what changed")
 	tp.reset_defaults()
-	check(is_equal_approx(tn.hop_time, 0.35) and tn.edge_wrap and tp.changed_text() == "(no changes)", "Reset restores the defaults")
+	check(is_equal_approx(tn.buoyancy_lag, 4.0) and tn.edge_wrap and tp.changed_text() == "(no changes)", "Reset restores the defaults")
 	tp.close()
 	check(not tp.is_open and not paused, "closing resumes")
 	check(same(base2, snap()), "using the panel allocates nothing")

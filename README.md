@@ -4,23 +4,24 @@ A Frogger-style hot air balloon game (working title). Side view, low-poly shapes
 
 **Play:** https://hotshotted.github.io/Hot-Air-Balloon/
 
-- **Swipe lanes:** swipe up anywhere to rise one wind layer, swipe down to drop one (see below). No buoyancy, no momentum: the balloon does exactly what the input says.
+- **Hold** anywhere to fire the burner and rise, release to sink (see Controls below).
 - The sky is split into horizontal wind layers. Each blows left or right at a **constant speed** (drifting particles, streamers and chevrons show it, and every layer has a label with arrows and px/s at its right edge: more arrows and a bigger number = faster). The balloon's sideways speed is **exactly** its layer's wind (it blends only for a moment when it changes layer). The screen edges wrap. There are no random gusts; the only change is a layer that reverses on a visible countdown.
 - Every layer carries hazards that travel with its wind: birds, kites, other balloons, drones. Time your climbs and slip through the gaps.
 - **Flights:** each Flight is a fixed chain of 5 legs generated from a seed (the same every time). One tank of propane for the whole Flight: what is left after a leg carries into the next. Failing a leg ends the Flight.
 - **Stars per Flight:** 1 for finishing, 1 for finishing with enough propane left (the gold tick on the gauge), 1 for collecting enough of the floating gold coins. Progress toward each is shown under the gauge.
 - **Coins** (currency): per leg cleared, per floating coin collected, and a bonus for leftover propane at the end. Score = legs x 100 + a speed bonus for every second under par.
 
-## Controls: swipe lanes
+## Controls: hold to burn
 
-- **Swipe up** anywhere (a drag of at least `swipe_min_px` = 36 px, anything within about 60 degrees of vertical) to rise one wind layer; **swipe down** to drop one. One hop per swipe. Keys: Up / W / Space and Down / S. A plain tap does nothing.
-- A hop takes a fixed `hop_time` (0.35 s) with smooth easing and the balloon stops dead (no momentum), then settles with a slight bob. A second swipe during a hop queues at most one more hop.
-- Each hop **up** shows a burner flame burst with sparks and a whoomp (synthesised in `Sfx.gd`) and costs `hop_fuel` (1.5) propane (free inside a thermal and from a Sandbag); each hop **down** is free and shows a vent puff and hiss.
-- **Tools:** Sandbag = an instant two-layer hop up, no propane; Anchor = stop drifting sideways and hold position in the layer for 2 s (no hopping meanwhile); Quick Vent = an instant two-layer drop. With only one layer of room a two-layer tool hops that one. In thin air (Himalayas) a hop up costs up to 1 / (1 - `thin_air_loss`) times the propane; in the Sahara a hop up from inside a thermal is free.
-- Landing legs: hop up to the sky above the airship, then hop down onto its deck (a hop is controlled, so a touch-down is always gentle).
-- **Drift preview** (`?preview=off` hides it): a faint dotted line shows where the balloon will be over the next `preview_seconds` (1.5 s) including a queued hop, and a faint ring shows where each hazard will be at the end of it. Pickups (propane, coins, stars) hang still; the balloon sweeps past them.
-- The earlier buoyancy controls and the drag / steady trial schemes are gone from the code; they live in git history (`195f0a4` has the buoyancy physics, `56f8233` the three-scheme trial).
-- **Fairness checks:** `tests/smoke_test.gd` (CI) checks the mechanics and the propane / storm / lightning budgets of every Flight; `tests/fairness_sim.gd` (offline, minutes) is a planner that searches the real generated layouts for *any* clear path (see its header for what it does and does not prove).
+- **Hold anywhere** (finger / mouse / Space / Up) to fire the burner and rise; **release** to sink. The air takes a moment to heat and cool and the climb speed follows the heat with a buoyancy lag, tuned at **half the original response time** (`buoyancy_lag` 4.0, `heat_rate` 3.6, `cool_rate` 2.2) so the balloon feels weighty, not sluggish.
+- **Speed caps:** the balloon never rises faster than `max_climb_speed` (320 px/s) nor sinks faster than `max_sink_speed` (280 px/s), whatever the burner, a thermal, the Sandbag or the Quick Vent add.
+- **Propane:** the burner burns `burn_rate` per second while it fires; what is left carries into the next leg.
+- **Wind:** constant per layer (labelled with arrows and px/s); the balloon's sideways speed is exactly its layer's wind.
+- **Tools** (Sandbag, Anchor, Quick Vent): see below. The Quick Vent is the vent button for a faster descent.
+- **Hard landing** (Precision Landing): touching the deck at more than `land_speed` (170 px/s) fails the leg. The plain sink (90 px/s) is gentle; only a Quick Vent plunge is fast enough, so it suits the physics.
+- **Drift preview** (`?preview=off` hides it): two faint dotted lines show where the balloon will be in the next `preview_seconds` (1.5 s) - an orange one if you keep burning, a white one if you release now - and a faint ring shows where each hazard will be at the same moment. Pickups (propane, coins, stars) hang still; the balloon sweeps past them.
+- The swipe-lanes build and the earlier drag / steady trials are gone from the code; they live in git history (`fed980e` swipe lanes, `56f8233` the three-scheme trial). The original buoyancy physics is `195f0a4`.
+- **Fairness checks:** `tests/smoke_test.gd` (CI) checks the mechanics and the propane / storm / lightning budgets of every Flight; `tests/fairness_sim.gd` (offline, tens of minutes) is a planner that searches the real generated layouts for *any* clear path under the burner physics (see its header for what it does and does not prove).
 
 ## Variety, not density
 
@@ -38,9 +39,9 @@ Hazard density and wind speed are capped at moderate values (at most 4 hazards p
 
 **Player tools** (buttons below the ground line, with charges per leg; touches are handled in `Main._input`, so a second finger works while the first is swiping). Each is available from the second Flight of its region on and shows a one-line intro the first time:
 
-- **Sandbag** (Alps): an instant two-layer hop up, no propane, 2 per leg.
-- **Anchor** (Sahara): stop drifting sideways for 2 s (holding the layer), 1 per leg.
-- **Quick Vent** (Himalayas): an instant two-layer drop, 2 per leg.
+- **Sandbag** (Alps): an instant climb burst (`sandbag_boost`, then a push at full climb speed for 0.5 s), no propane, 2 per leg.
+- **Anchor** (Sahara): stop drifting sideways for 2 s (the burner still works), 1 per leg.
+- **Quick Vent** (Himalayas): a strong descent burst (3x the sink speed for 1.6 s, within the sink cap), 2 per leg.
 
 **Rhythm hazards** (patterns you can read): geese in V formation (they flap together), kites that dip together on a 2.4 s beat, periodic lightning (a white flash and a blinking column for 1.4 s, then the strike; three columns in a repeating order). **Changing winds:** some layers reverse on a visible countdown (`<> 5`), hazards and all.
 
@@ -55,7 +56,7 @@ A map of 4 regions with 6 Flights each. A Flight opens when the one before it is
 | Countryside | green hills | birds, kites, balloons, drones | gentle winds |
 | Alps | icy blue, snow peaks | eagles, cable cars (+ birds, kites) | strong, steady winds (no gusts) |
 | Sahara | sand and sunset | vultures, flying carpets (+ balloons, drones) | thermals (columns of strong updraft) and sand haze that hides distant layers |
-| Himalayas | dusk purple, dark peaks | eagles, paragliders (+ birds, drones) | thin air (hops up cost more propane with altitude) and a fast jet-stream top layer |
+| Himalayas | dusk purple, dark peaks | eagles, paragliders (+ birds, drones) | thin air (the burner weakens with altitude) and a fast jet-stream top layer |
 
 Difficulty rises across the 6 Flights of a region (more hazard kinds, denser layers, faster winds) and from region to region.
 
@@ -110,7 +111,7 @@ Everything that repeats is pooled in fixed arrays, built once and drawn during t
 | Flag | Effect |
 | --- | --- |
 | `?perf` | rolling frame-time graph, worst-frame readout, script time per frame, hitch log, sim-vs-wall clock |
-| `?tune` | TUNE button (top-right): live sliders for hop time, swipe length, bob, winds, hazard density, propane...; **Copy values** puts the changed values on the clipboard |
+| `?tune` | TUNE button (top-right): live sliders for buoyancy, burner, speed caps, winds, hazard density, propane...; **Copy values** puts the changed values on the clipboard |
 | `?preview=off` | hide the drift preview (dotted path + hazard ghosts) |
 | `?level=N` | start at level N |
 | `?god` | hazards cannot hurt |

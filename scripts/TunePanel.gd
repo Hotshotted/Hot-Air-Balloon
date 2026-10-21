@@ -16,10 +16,14 @@ signal save_changed
 
 ## [Tuning property, label, min, max, step]: the values tuned most.
 const ENTRIES := [
-	["hop_time", "Hop time (s)", 0.15, 0.8, 0.01],
-	["hop_fuel", "Propane per hop up", 0.0, 15.0, 0.5],
-	["swipe_min_px", "Swipe: minimum length (px)", 10.0, 120.0, 2.0],
-	["bob_amp", "Settling bob (px)", 0.0, 20.0, 0.5],
+	["buoyancy_lag", "Buoyancy lag (1/s)", 0.5, 8.0, 0.1],
+	["heat_rate", "Burner heat-up (per s)", 0.5, 8.0, 0.1],
+	["cool_rate", "Burner cool-down (per s)", 0.5, 8.0, 0.1],
+	["climb_speed", "Climb speed (px/s)", 100.0, 500.0, 10.0],
+	["sink_speed", "Sink speed (px/s)", 30.0, 300.0, 5.0],
+	["max_climb_speed", "Max climb speed (px/s)", 200.0, 600.0, 10.0],
+	["max_sink_speed", "Max sink speed (px/s)", 100.0, 600.0, 10.0],
+	["burn_rate", "Propane burn (per s)", 1.0, 30.0, 0.5],
 	["wind_blend_time", "Wind blend on a layer change (s)", 0.0, 1.0, 0.05],
 	["preview_seconds", "Preview length (s)", 0.5, 3.0, 0.1],
 	["balloon_scale", "Balloon size", 0.5, 1.2, 0.05],

@@ -46,9 +46,9 @@ var snap_score := 0
 var eff_add := 0.0
 var recipe: LegRecipe               # this leg's goal and twists
 var tool_charges := PackedInt32Array([0, 0, 0])   # sandbag, anchor, quick vent: charges left this leg
-const CONTROL_HINT := "SWIPE UP anywhere to rise one wind layer, SWIPE DOWN to drop one."
+const CONTROL_HINT := "HOLD anywhere to fire the burner and rise. Let go to sink."
 var _hinted := false
-var sfx: Sfx
+var burn_override := -1             # tests: 1 = burner held, 0 = released, -1 = read the real input
 var tool_avail: Array = []         # the tools this Flight offers
 var _goal_key := -1                  # the Daily Flight is a little harder than its region's mid Flight
 var _air_pct := -1
@@ -59,8 +59,6 @@ func _ready() -> void:
 	lanes = $Lanes
 	balloon = $Balloon
 	balloon.lanes = lanes
-	sfx = Sfx.new()
-	add_child(sfx)
 	hud = $Hud
 	if DebugFlags.tune_enabled():
 		tune_panel = TunePanel.new()
@@ -239,7 +237,7 @@ func _prewarm() -> void:
 		balloon.heat = 1.0
 		balloon.queue_redraw()
 		lanes.preview_balloon = balloon   # (warms the preview's meshes too)
-		balloon.predict()
+		balloon.predict(fuel > 0.0)
 		hud.shop.prewarm_show(shop_tick % 26)
 		shop_tick += 1
 		lanes.update(minf(get_process_delta_time(), 0.05))
@@ -459,6 +457,17 @@ func _on_tool_button(pos: Vector2) -> bool:
 			return true
 	return false
 
+## Is the player holding (a finger or the mouse anywhere on the playfield, Space or Up)? Hold = burn.
+func _holding() -> bool:
+	if burn_override >= 0:
+		return burn_override == 1
+	if (tune_panel and tune_panel.is_open) or hud.ad_active:
+		return false
+	if Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W):
+		return true
+	var mouse := get_viewport().get_mouse_position()
+	return Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and _tap_free(mouse)
+
 ## Is a touch at pos on the playfield (not on a tool, the boost button or the TUNE button)?
 func _tap_free(pos: Vector2) -> bool:
 	if (tune_panel and tune_panel.is_open) or hud.ad_active:
@@ -492,23 +501,22 @@ func _play(dt: float) -> void:
 	balloon.ceiling_y = Lanes.CEILING_Y if goal == Flights.LANDING else (Lanes.GOAL_Y + 14.0 if blocked else -100000.0)
 	lanes.storm_go = leg_started and leg_time >= Tuning.storm_start_delay
 	var climb_mult := lanes.climb_mult_at(balloon.position.y)
-	balloon.step(dt, fuel > 0.0)
-	var hop_ev := balloon.take_hop_event()
-	if hop_ev != 0:
-		_hop_fx(hop_ev)
+	var hold := _holding()
+	balloon.step(dt, hold, fuel > 0.0, lanes.thermal_lift(balloon.position.x), climb_mult)
 	if lanes.thin_air:
-		var pct := int(100.0 / climb_mult)
+		var pct := int(climb_mult * 100.0)
 		if pct != _air_pct:
 			_air_pct = pct
-			hud.set_air("thin air: hops up cost %d%% propane" % pct)
+			hud.set_air("thin air: burner at %d%%" % pct)
 	if not leg_started and not balloon.on_ground:
 		leg_started = true
 	if leg_started:
 		leg_time += dt
-	fuel = maxf(fuel - balloon.take_fuel_cost(climb_mult), 0.0)
+	if balloon.burning:
+		fuel = maxf(fuel - Tuning.burn_rate * dt, 0.0)
 	lanes.preview_balloon = balloon if DebugFlags.preview_enabled() else null
 	if lanes.preview_balloon:
-		balloon.predict()
+		balloon.predict(fuel > 0.0)
 	lanes.update(dt)
 	var got := lanes.collect(balloon)
 	if got > 0:
@@ -533,6 +541,8 @@ func _play(dt: float) -> void:
 		_fail("Caught by the storm")
 	elif landed == 1:
 		_clear_leg()
+	elif landed == 2:
+		_fail("Hard landing on the airship")
 	elif goal != Flights.LANDING and not blocked and balloon.position.y <= Lanes.GOAL_Y:
 		_clear_leg()
 	elif fuel <= 0.0 and balloon.on_ground:
@@ -577,10 +587,10 @@ func _update_goal() -> void:
 func _tool_intro(t: int) -> String:
 	match t:
 		0:
-			return "NEW TOOL: SANDBAG. Tap it to hop two layers up at once, free (%d per leg)." % int(Tuning.sandbag_charges)
+			return "NEW TOOL: SANDBAG. Tap it for an instant climb burst, free (%d per leg)." % int(Tuning.sandbag_charges)
 		1:
-			return "NEW TOOL: ANCHOR. Tap it to stop drifting sideways for %d seconds (%d per leg)." % [int(Tuning.anchor_seconds), int(Tuning.anchor_charges)]
-	return "NEW TOOL: QUICK VENT. Tap it to drop two layers at once (%d per leg)." % int(Tuning.vent_charges)
+			return "NEW TOOL: ANCHOR. Tap it to stop drifting sideways for %d seconds; the burner still works (%d per leg)." % [int(Tuning.anchor_seconds), int(Tuning.anchor_charges)]
+	return "NEW TOOL: QUICK VENT. Tap it to dump hot air for a strong descent burst (%d per leg)." % int(Tuning.vent_charges)
 
 func _sync_tools() -> void:
 	for i in 3:
@@ -590,92 +600,34 @@ func _sync_tools() -> void:
 func use_tool(i: int) -> bool:
 	if screen != SCREEN_PLAY or hud.ad_active or not tool_avail.has(i) or tool_charges[i] <= 0:
 		return false
-	if i == 0 and not balloon.use_sandbag():
-		return false
-	if i == 2 and not balloon.use_vent():
-		return false
 	tool_charges[i] -= 1
-	if i == 1:
-		balloon.use_anchor()
-		lanes.burst(balloon.position + Vector2(0, 40), Color(0.7, 0.7, 0.75), 8, 160.0)
+	match i:
+		0:
+			balloon.use_sandbag()
+			lanes.burst(balloon.position + Vector2(0, 70), Color(0.85, 0.7, 0.4), 8, 240.0)
+		1:
+			balloon.use_anchor()
+		2:
+			balloon.use_vent()
+			lanes.burst(balloon.position + Vector2(0, -50), Color(1, 1, 1), 8, 200.0)
 	_sync_tools()
 	return true
 
-## A hop began: up = a burner flame burst, sparks and a whoomp; down = a vent puff and a hiss.
-func _hop_fx(dir: int) -> void:
-	if dir > 0:
-		lanes.burst(balloon.position + Vector2(0, 44), Color(1.0, 0.55, 0.15), 8, 260.0)
-		lanes.burst(balloon.position + Vector2(0, 44), Color(1.0, 0.9, 0.45), 5, 180.0)
-		sfx.burner()
-	else:
-		lanes.burst(balloon.position + Vector2(0, -52), Color(1, 1, 1), 9, 200.0)
-		sfx.vent()
-
-var _swipe_id := -2        # the finger (-1 = the mouse) whose swipe has begun and not hopped yet
-var _swipe_from := Vector2.ZERO
-
-## Touches: the tool buttons, then swipes. Handled here (not polled) so a second finger works.
+## Touches on the tool buttons (handled here so a second finger works while the first holds the burner).
 func _input(event: InputEvent) -> void:
 	if _warming or screen != SCREEN_PLAY:
 		return
 	var pos := Vector2(-1, -1)
-	var finger := -1
-	var pressed := false
-	var released := false
-	var moved := false
-	if event is InputEventScreenTouch:
+	if event is InputEventScreenTouch and event.pressed:
 		pos = event.position
-		finger = event.index
-		pressed = event.pressed
-		released = not event.pressed
-	elif event is InputEventScreenDrag:
-		pos = event.position
-		finger = event.index
-		moved = true
-	elif event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.device != InputEvent.DEVICE_ID_EMULATION:
+	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT and event.device != InputEvent.DEVICE_ID_EMULATION:
 		pos = event.position   # (a mouse click; the emulated mouse of a touch is skipped: the touch itself is handled above)
-		pressed = event.pressed
-		released = not event.pressed
-	elif event is InputEventMouseMotion and event.device != InputEvent.DEVICE_ID_EMULATION and (event.button_mask & MOUSE_BUTTON_MASK_LEFT) != 0:
-		pos = event.position
-		moved = true
-	elif event is InputEventKey and event.pressed and not event.echo:
-		_key(event.keycode)
-		return
 	if pos.x < 0.0:
 		return
-	if pressed:
-		for i in 3:
-			if tool_avail.has(i) and Hud.TOOL_RECTS[i].has_point(pos):
-				use_tool(i)
-				return
-		if _tap_free(pos):
-			_swipe_id = finger
-			_swipe_from = pos
-	elif moved and finger == _swipe_id:
-		swipe(pos - _swipe_from)
-	elif released and finger == _swipe_id:
-		_swipe_id = -2
-
-## A drag of `d` since the finger went down: long enough and mostly vertical is a swipe: up hops up, down hops down (one
-## hop per touch). Short and forgiving: swipe_min_px, and anything within about 60 degrees of vertical counts.
-func swipe(d: Vector2) -> bool:
-	if absf(d.y) < Tuning.swipe_min_px or absf(d.y) < absf(d.x) * 0.6:
-		return false
-	_swipe_id = -2
-	return hop(1 if d.y < 0.0 else -1)
-
-## Hop one layer up (+1) or down (-1) if the game is being played.
-func hop(dir: int) -> bool:
-	if screen != SCREEN_PLAY or hud.ad_active or (tune_panel and tune_panel.is_open):
-		return false
-	return balloon.request_hop(dir, fuel > 0.0)
-
-func _key(code: int) -> void:
-	if code == KEY_UP or code == KEY_W or code == KEY_SPACE:
-		hop(1)
-	elif code == KEY_DOWN or code == KEY_S:
-		hop(-1)
+	for i in 3:
+		if tool_avail.has(i) and Hud.TOOL_RECTS[i].has_point(pos):
+			use_tool(i)
+			return
 
 # ---------------------------------------------------------------------------------------------------------
 # Frame time: the simulation can never run ahead of the clock

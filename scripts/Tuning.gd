@@ -12,26 +12,28 @@ var stall_delta := 0.25
 ## Frames skipped (no simulation) after a stall or the window coming back, so nothing catches up.
 var resume_skip_frames := 2
 
-# ---------- Controls: swipe lanes ----------
-## No buoyancy, no momentum. Swipe up / down anywhere (a short drag of at least swipe_min_px) to hop one wind layer up / down.
-## The hop takes hop_time seconds with smooth easing and the balloon stops dead, then bobs slightly (bob_amp px, fading at
-## bob_decay per second, wobbling at bob_rate rad/s). A swipe during a hop queues at most one more hop.
-## Each hop UP costs hop_fuel propane (free inside a thermal and from a Sandbag); going down is free.
-var hop_time := 0.35
-var hop_fuel := 1.5
-var swipe_min_px := 36.0
-var bob_amp := 7.0
-var bob_decay := 7.0
-var bob_rate := 16.0
-## Sandbag / Quick Vent hop this many layers at once.
-var tool_layers := 2.0
-## Volume of the burner and vent sounds (dB).
-var sfx_db := -8.0
+# ---------- Balloon: buoyancy and burner ----------
+## Hold to burn (rise), release to sink. Vertical speed (px/s) at full burner heat, and at zero heat (the slow sink).
+var climb_speed := 250.0
+var sink_speed := 90.0
+## Buoyancy lag (1/s): how fast vertical speed follows what the heat asks for. Lower = more sluggish. (Twice the original
+## 2.0: the response time is half, so the balloon is weighty, not sluggish.)
+var buoyancy_lag := 4.0
+## Burner spool (heat per second): how fast the air heats up while the burner fires, and cools after (twice the original too).
+var heat_rate := 3.6
+var cool_rate := 2.2
+## Hard caps: the balloon never rises faster than max_climb_speed nor sinks faster than max_sink_speed, whatever the
+## burner, a thermal, a Sandbag or the Quick Vent add.
+var max_climb_speed := 320.0
+var max_sink_speed := 280.0
+## Propane burned per second while the burner fires.
+var burn_rate := 4.5
 ## The balloon's sideways speed is exactly its layer's wind; it blends to a new layer's wind over wind_blend_time seconds.
 var wind_blend_time := 0.25
 ## true: leaving one side of the screen brings the balloon back on the other. false: the edges block.
 var edge_wrap := true
-## ?preview: the faint dotted line shows where the balloon will be in preview_seconds, the ghost rings where the hazards will be.
+## ?preview: two faint dotted lines show where the balloon will be in preview_seconds if it keeps burning / if it lets go
+## now, the ghost rings where the hazards will be.
 var preview_seconds := 1.5
 ## Balloon size multiplier, and how much of its drawn size counts for collisions (0.85 = forgiving).
 var balloon_scale := 0.8
@@ -55,8 +57,7 @@ var empty_lane_chance := 0.25
 var countryside_wind_mult := 0.8
 ## Alps: strong, steady winds (this much faster than the base speed, still capped by wind_max).
 var alps_wind_mult := 1.25
-## Sahara: thermals are columns (half width thermal_width px): in drag / steady they add thermal_lift px/s of free rise,
-## in lanes a hop up from inside one is free.
+## Sahara: thermals are columns (half width thermal_width px) that add up to thermal_lift px/s of rise (still capped).
 ## Sand haze: layers more than haze_clear_lanes away from the balloon fade, haze_per_lane alpha per layer, up to haze_max.
 var thermal_width := 95.0
 var thermal_lift := 210.0
@@ -117,20 +118,26 @@ var storm_speed_per_leg := 2.0
 var storm_start_delay := 2.0
 var stars_per_leg := 4.0
 ## Precision Landing: the airship drifts at airship_speed (px/s); its deck is +-airship_deck_half wide; the balloon may
-## touch down by hopping down onto it from the sky above.
+## touch down at up to land_speed (px/s of descent), faster is a hard landing.
 var airship_speed := 45.0
 var airship_deck_half := 130.0
+var land_speed := 170.0
 ## Delivery: a mooring platform picks up / takes the mail when the balloon is within these distances of it.
 var dock_half_w := 100.0
 var dock_half_h := 70.0
 
 # ---------- Player tools (unlocked by region) ----------
-## Sandbag (Alps): an instant two-layer hop up that costs no propane. Anchor (Sahara): stop drifting sideways and hold
-## position in the layer for anchor_seconds. Quick Vent (Himalayas): an instant two-layer drop. Charges are per leg.
+## Sandbag (Alps): an instant climb burst of sandbag_boost px/s, no propane. Anchor (Sahara): stop drifting sideways for
+## anchor_seconds (burning still works). Quick Vent (Himalayas): a strong descent burst: vent_mult times the sink speed for
+## vent_seconds. Charges are per leg.
 var sandbag_charges := 2.0
+var sandbag_boost := 300.0
+var sandbag_seconds := 0.5   # ...which then keeps pushing at the full climb speed this long
 var anchor_charges := 1.0
 var anchor_seconds := 2.0
 var vent_charges := 2.0
+var vent_seconds := 1.6
+var vent_mult := 3.0
 
 # ---------- Rhythm and changing winds ----------
 ## Kites dip on a beat: all the kites of a layer dip together every kite_beat_period seconds (by kite_dip of the free height).

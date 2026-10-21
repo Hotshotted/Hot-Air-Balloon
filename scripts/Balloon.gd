@@ -1,60 +1,50 @@
 class_name Balloon
 extends Node2D
-## The player's balloon: only altitude is controlled, in hops between wind layers, and it does exactly what the input says
-## (no buoyancy, no momentum). A swipe up hops one layer up, a swipe down one layer down. A hop takes Tuning.hop_time with
-## smooth easing and the balloon stops dead (a slight bob settles it); a second swipe during a hop queues at most one more.
-## Each hop UP costs Tuning.hop_fuel propane (free inside a thermal and from a Sandbag); going down is free.
-## Sideways it moves at exactly the wind of the layer it is in (blending over Tuning.wind_blend_time on a layer change).
-## Drawn from pre-built polygons: nothing is allocated while playing.
+## The player's balloon: only altitude is controlled. Holding fires the burner (the air heats up over heat_rate, and the
+## climb speed follows the heat with buoyancy_lag), releasing lets it cool and sink slowly. Climb and sink speeds are
+## capped (max_climb_speed / max_sink_speed). Sideways it moves at exactly the wind of the layer it is in (blending over
+## wind_blend_time when it changes layer). Drawn from pre-built polygons: nothing is allocated while playing.
 
 const WIDTH := 84.0            # design width (before Tuning.balloon_scale)
 const BASKET_BOTTOM := 84.0    # design distance from the envelope centre (the node origin) to the basket's base
 ## Hit circles in design units: [dy from the origin, radius]. Envelope top, envelope bottom, basket.
 const HIT := [[-10.0, 38.0], [24.0, 22.0], [72.0, 13.0]]
-const PRED_N := 12             # points of the drift preview
+const PRED_N := 12             # points of each drift-preview line
+const PRED_SUB := 8            # simulation steps between two points
 
-var lanes: Lanes        # the wind layers (Main sets it): the levels and the wind come from here
-var rise := 0.0        # vertical speed, px/s, positive = up (measured from the actual movement)
+var lanes: Lanes        # the wind layers (Main sets it): the wind of the balloon's layer comes from here
+var rise := 0.0        # vertical speed, px/s, positive = up
 var vx := 0.0          # sideways speed, px/s
-var heat := 0.0        # 0..1: only the flame's look (a burst at every hop up)
+var heat := 0.0        # 0..1, how hot the air is
+var burning := false   # the burner is firing right now
 var on_ground := true
 var sway := 0.0
 var _t := 0.0
 
 var flame: Node2D       # the burner flame: its own tiny node, redrawn only while it burns
 var _flame_on := false
-var anchor_left := 0.0   # Anchor (Sahara): seconds of holding position left
+var anchor_left := 0.0   # Anchor (Sahara): seconds of no sideways drift left
+var vent_left := 0.0     # Quick Vent (Himalayas): seconds of strong descent left
+var boost_left := 0.0    # Sandbag (Alps): seconds of full climb push left
 var ceiling_y := -100000.0   # the balloon cannot rise above this (a leg whose goal is not met yet)
 var body_draws := 0     # times the body has been drawn (only on a cosmetics change or a fresh leg)
 var env_id := 0        # equipped cosmetics (purely visual)
 var basket_id := 0
 var pass_id := 0
-
-# --- propane the movement cost since Main last took it ---
-var paid_hops := 0       # hops up that were not free
-var hop_event := 0       # +1 a hop up just began, -1 a hop down (Main reads and clears it: flame burst, puff, sound)
-# --- the hop in progress ---
-var hopping := false
-var hop_t := 0.0
-var hop_y0 := 0.0
-var hop_y1 := 0.0
-var hop_dir := 0
-var queued_dir := 0      # a swipe during a hop: the next hop (at most one)
-var _free_hops := 0      # Sandbag: hops up that cost nothing
-var _bob_t := 99.0       # time since the balloon settled into a layer (a slight bob)
-var _bob_y := 0.0        # the bob's offset in position.y right now
 # --- wind ---
 var _wind_lane := -2
 var _wind_from := 0.0
 var _blend_t := 99.0
-# --- drift preview ---
-var pred := PackedVector2Array()
+# --- drift preview: the path if the burner keeps firing, and if it is released now ---
+var pred_burn := PackedVector2Array()
+var pred_rel := PackedVector2Array()
 
 func _ready() -> void:
 	flame = BalloonFlame.new()
 	flame.balloon = self
 	add_child(flame)
-	pred.resize(PRED_N)
+	pred_burn.resize(PRED_N)
+	pred_rel.resize(PRED_N)
 	reset()
 
 func s() -> float:
@@ -64,22 +54,18 @@ func s() -> float:
 func floor_y() -> float:
 	return Lanes.GROUND_Y - BASKET_BOTTOM * s()
 
-## Back on the ground in the middle, still.
+## Back on the ground in the middle, cold and still.
 func reset() -> void:
 	rise = 0.0
 	vx = 0.0
 	heat = 0.0
 	anchor_left = 0.0
+	vent_left = 0.0
+	boost_left = 0.0
 	ceiling_y = -100000.0
+	burning = false
 	on_ground = true
 	sway = 0.0
-	paid_hops = 0
-	hop_event = 0
-	hopping = false
-	queued_dir = 0
-	_free_hops = 0
-	_bob_t = 99.0
-	_bob_y = 0.0
 	_wind_lane = -2
 	_blend_t = 99.0
 	env_id = Save.equipped(Cosmetics.ENV)
@@ -91,131 +77,48 @@ func reset() -> void:
 	queue_redraw()   # the body: only now (a cosmetics change or a fresh leg)
 	flame.queue_redraw()
 
-## Teleport to height y (tests): no hop in progress, no bob.
+## Teleport to height y at rest (tests).
 func set_altitude(y: float) -> void:
 	position.y = minf(y, floor_y())
-	_bob_y = 0.0
-	_bob_t = 99.0
-	hopping = false
-	queued_dir = 0
+	rise = 0.0
 	on_ground = position.y >= floor_y()
 
-## The height without the settling bob.
-func rest_y() -> float:
-	return position.y - _bob_y
+## One vertical-speed step shared by step() and the preview: the speed the heat asks for, lagged, capped.
+func _next_rise(r: float, h: float, venting: bool, boosting: bool, lift: float, climb_mult: float, dt: float) -> float:
+	var target := lerpf(-Tuning.sink_speed, Tuning.climb_speed * climb_mult, h) + lift
+	if boosting:   # Sandbag: a push to the full climb speed
+		target = Tuning.max_climb_speed
+	if venting:   # Quick Vent: dump the hot air, a strong descent
+		target = -Tuning.sink_speed * Tuning.vent_mult
+	target = clampf(target, -Tuning.max_sink_speed, Tuning.max_climb_speed)
+	r += (target - r) * (1.0 - exp(-(Tuning.buoyancy_lag * (2.0 if venting else 1.0)) * dt))
+	return clampf(r, -Tuning.max_sink_speed, Tuning.max_climb_speed)
 
-# ---------------------------------------------------------------------------------------------------------
-# Levels: the ground, the centre of every wind layer, and the goal / the sky above the top layer
-# ---------------------------------------------------------------------------------------------------------
-
-func top_level() -> int:
-	return lanes.n_lanes
-
-func level_y(lv: int) -> float:
-	if lv < 0:
-		return floor_y()
-	if lv >= lanes.n_lanes:
-		# Above the top layer: the goal line, or on a landing leg the sky over the airship's deck.
-		return Lanes.SHIP_DECK_Y - 96.0 * s() if lanes.ship_on else Lanes.GOAL_Y - 1.0
-	return lanes._lane_cy(lv)
-
-## The level whose height is nearest to y.
-func nearest_level(y: float) -> int:
-	var best := -1
-	var bd := 1.0e9
-	for lv in range(-1, lanes.n_lanes + 1):
-		var d := absf(level_y(lv) - y)
-		if d < bd:
-			bd = d
-			best = lv
-	return best
-
-## How many layers (0, 1 or up to `want`) the balloon can move in direction dir right now (the ground, the top and the
-## ceiling of an unfinished goal stop it).
-func hop_room(dir: int, want: int) -> int:
-	var from := nearest_level(rest_y())
-	var n := 0
-	for k in range(1, want + 1):
-		var to := from + dir * k
-		if to < -1 or to > lanes.n_lanes or level_y(to) < ceiling_y:
-			break
-		n = k
-	return n
-
-func can_hop(dir: int) -> bool:
-	return hop_room(dir, 1) > 0
-
-## A swipe (or a tool): hop `layers` layers up (dir +1) or down (-1) from the nearest level. Returns true if it did something
-## (a hop began or was queued). `fuel_ok`: the tank is not empty. `free`: costs no propane (Sandbag).
-func request_hop(dir: int, fuel_ok: bool, layers: int = 1, free: bool = false) -> bool:
-	if anchor_left > 0.0:
-		return false
-	if hopping:
-		if layers == 1 and not free:   # a swipe during a hop: queue at most one more
-			queued_dir = dir
-			return true
-		hopping = false   # a tool during a hop: take over from where the balloon is now
-		queued_dir = 0
-	return _start_hop(dir, fuel_ok, layers, free)
-
-func _start_hop(dir: int, fuel_ok: bool, layers: int, free: bool) -> bool:
-	var k := hop_room(dir, layers)
-	if k == 0:
-		return false
-	var from := nearest_level(rest_y())
-	if dir > 0 and not free and lanes.thermal_lift(position.x) <= 0.0:
-		if not fuel_ok:
-			return false
-		paid_hops += 1
-	hopping = true
-	hop_t = 0.0
-	hop_y0 = rest_y()
-	hop_y1 = level_y(from + dir * k)
-	hop_dir = dir
-	hop_event = dir
-	if dir > 0:
-		heat = 1.0
-	_bob_t = 99.0
-	_bob_y = 0.0
-	return true
-
-# ---------------------------------------------------------------------------------------------------------
-# Step
-# ---------------------------------------------------------------------------------------------------------
-
-## Advance by dt. `fuel_ok`: the tank is not empty.
-func step(dt: float, fuel_ok: bool) -> void:
+## Advance by dt. `hold`: the player is holding; `fuel_left`: the tank is not empty.
+## `lift`: extra rise from a thermal (px/s); `climb_mult`: share of the climb speed the burner keeps (thin air).
+func step(dt: float, hold: bool, fuel_left: bool, lift: float = 0.0, climb_mult: float = 1.0) -> void:
 	_t += dt
 	var anchored := anchor_left > 0.0
 	if anchored:
 		anchor_left = maxf(anchor_left - dt, 0.0)
-	var y0 := rest_y()
-	var y := y0
-	if hopping and not anchored:
-		hop_t += dt
-		var p := clampf(hop_t / maxf(Tuning.hop_time, 0.02), 0.0, 1.0)
-		y = lerpf(hop_y0, hop_y1, p * p * (3.0 - 2.0 * p))
-		if p >= 1.0:
-			hopping = false
-			_bob_t = 0.0   # settled: a slight bob
-			if queued_dir != 0:
-				var q := queued_dir
-				queued_dir = 0
-				_start_hop(q, fuel_ok, 1, false)
+	var venting := vent_left > 0.0
+	if venting:
+		vent_left = maxf(vent_left - dt, 0.0)
+	burning = hold and fuel_left and not venting
+	heat = move_toward(heat, 1.0 if burning else 0.0, (Tuning.heat_rate if burning else Tuning.cool_rate) * dt)
+	rise = _next_rise(rise, heat, venting, boost_left > 0.0, lift, climb_mult, dt)
+	if boost_left > 0.0:
+		boost_left = maxf(boost_left - dt, 0.0)
+	var y := position.y - rise * dt
 	if y < ceiling_y:
 		y = ceiling_y
-		if hopping and hop_dir > 0:
-			hopping = false
+		rise = minf(rise, 0.0)
 	var fy := floor_y()
-	on_ground = y >= fy - 0.01
+	on_ground = y >= fy
 	if on_ground:
 		y = fy
-	# the bob: a damped wobble after settling (it never moves the balloon off its layer in any way that matters)
-	_bob_t += dt
-	_bob_y = Tuning.bob_amp * exp(-_bob_t * Tuning.bob_decay) * sin(_bob_t * Tuning.bob_rate) if (not hopping and _bob_t < 2.0 and not on_ground) else 0.0
-	position.y = y + _bob_y
-	rise = (y0 - y) / dt if dt > 0.0 else 0.0
-	heat = move_toward(heat, 0.0, 2.5 * dt)
+		rise = maxf(rise, 0.0)
+	position.y = y
 	_sideways(dt, anchored)
 	var x := position.x + vx * dt
 	var half := WIDTH * 0.5 * s()
@@ -242,7 +145,7 @@ func step(dt: float, fuel_ok: bool) -> void:
 ## Sideways speed: exactly the wind of the layer the balloon is in (0 on the ground and while anchored); blended
 ## over wind_blend_time only when the layer changes.
 func _sideways(dt: float, anchored: bool) -> void:
-	var lane := -1 if on_ground else lanes.lane_of(rest_y())
+	var lane := -1 if on_ground else lanes.lane_of(position.y)
 	if anchored:
 		vx = 0.0
 		_wind_lane = -2
@@ -260,89 +163,66 @@ func _sideways(dt: float, anchored: bool) -> void:
 		var a := _blend_t / bt
 		vx = lerpf(_wind_from, target, a * a * (3.0 - 2.0 * a))
 
-# ---------------------------------------------------------------------------------------------------------
-# Propane, tools
-# ---------------------------------------------------------------------------------------------------------
+## Player tools. Sandbag: an instant climb burst. Anchor: no sideways drift. Quick Vent: a strong descent burst.
+func use_sandbag() -> void:
+	rise = clampf(maxf(rise, 0.0) + Tuning.sandbag_boost, -Tuning.max_sink_speed, Tuning.max_climb_speed)
+	boost_left = Tuning.sandbag_seconds
+	on_ground = false
 
-## Propane the hops since the last call cost; `climb_mult` < 1 (thin air) makes it cost more.
-func take_fuel_cost(climb_mult: float) -> float:
-	var c := float(paid_hops) * Tuning.hop_fuel
-	paid_hops = 0
-	return c / maxf(climb_mult, 0.2)
-
-## Which hop event happened since the last call (+1 up, -1 down, 0 none).
-func take_hop_event() -> int:
-	var e := hop_event
-	hop_event = 0
-	return e
-
-## Sandbag: an instant two-layer hop up that costs no propane (one layer if only one is left). False if there is no room.
-func use_sandbag() -> bool:
-	return request_hop(1, true, Tuning.tool_layers, true)
-
-## Quick Vent: an instant two-layer drop (one layer if only one is left). False if there is no room.
-func use_vent() -> bool:
-	return request_hop(-1, true, Tuning.tool_layers, true)
-
-## Anchor: no sideways drift (and no hopping) for Tuning.anchor_seconds, in the current layer.
 func use_anchor() -> void:
 	anchor_left = Tuning.anchor_seconds
 
-## The hull of the airship pushed the balloon back out underneath it.
-func bump_down() -> void:
-	hopping = false
-	queued_dir = 0
+func use_vent() -> void:
+	vent_left = Tuning.vent_seconds
+
+## Speed of the descent, px/s (0 if rising).
+func descent_speed() -> float:
+	return maxf(-rise, 0.0)
 
 # ---------------------------------------------------------------------------------------------------------
-# Drift preview: where the balloon will be over the next Tuning.preview_seconds if nothing more is tapped
+# Drift preview: where the balloon will be over the next Tuning.preview_seconds if it keeps burning / lets go now
 # ---------------------------------------------------------------------------------------------------------
 
-## Fills `pred` (PRED_N points). Allocation-free.
-func predict() -> void:
-	var total := Tuning.preview_seconds
-	var dt := total / float(PRED_N)
+## Fills pred_burn and pred_rel (PRED_N points each). `fuel_left`: the tank is not empty. Allocation-free.
+func predict(fuel_left: bool) -> void:
+	_predict(true and fuel_left, pred_burn)
+	_predict(false, pred_rel)
+
+func _predict(burn: bool, out: PackedVector2Array) -> void:
+	var dt := Tuning.preview_seconds / float(PRED_N * PRED_SUB)
 	var x := position.x
+	var y := position.y
+	var r := rise
+	var h := heat
 	var vxp := vx
 	var half := WIDTH * 0.5 * s()
 	var fy := floor_y()
-	var hq := hopping
-	var ht := hop_t
-	var hy0 := hop_y0
-	var hy1 := hop_y1
-	var qd := queued_dir
-	var cur_y := rest_y()
-	var anchored := anchor_left > 0.0
+	var t := 0.0
 	for k in PRED_N:
-		var t := dt * float(k + 1)
-		var y := cur_y
-		if anchored and t <= anchor_left:
-			y = rest_y()
-		elif hq:
-			var p := (ht + dt) / maxf(Tuning.hop_time, 0.02)
-			ht += dt
-			if p >= 1.0:
-				y = hy1
-				hq = false
-				if qd != 0:   # the queued swipe: the next hop starts where this one ended
-					hq = true
-					ht = 0.0
-					hy0 = hy1
-					hy1 = level_y(clampi(nearest_level(hy0) + qd, -1, lanes.n_lanes))
-					qd = 0
-			else:
-				y = lerpf(hy0, hy1, p * p * (3.0 - 2.0 * p))
-		y = clampf(y, maxf(ceiling_y, -1.0e5), fy)
-		cur_y = y
-		var lane := -1 if y >= fy - 0.01 else lanes.lane_of(y)
-		var target := 0.0 if (lane < 0 or (anchored and t <= anchor_left)) else lanes.lane_wind[lane]
-		vxp = lerpf(vxp, target, minf(dt / maxf(Tuning.wind_blend_time, 0.001), 1.0))
-		x += vxp * dt
-		if Tuning.edge_wrap:
-			if x > Lanes.W + half:
-				x -= Lanes.W + 2.0 * half
-			elif x < -half:
-				x += Lanes.W + 2.0 * half
-		pred[k] = Vector2(x, y)
+		for q in PRED_SUB:
+			t += dt
+			var venting := t <= vent_left
+			var burning_now := burn and not venting
+			h = move_toward(h, 1.0 if burning_now else 0.0, (Tuning.heat_rate if burning_now else Tuning.cool_rate) * dt)
+			r = _next_rise(r, h, venting, t <= boost_left, lanes.thermal_lift(x), lanes.climb_mult_at(y), dt)
+			y -= r * dt
+			if y < ceiling_y:
+				y = ceiling_y
+				r = minf(r, 0.0)
+			if y >= fy:
+				y = fy
+				r = maxf(r, 0.0)
+			var anchored := t <= anchor_left
+			var lane := -1 if y >= fy else lanes.lane_of(y)
+			var target := 0.0 if (lane < 0 or anchored) else lanes.lane_wind[lane]
+			vxp = 0.0 if anchored else lerpf(vxp, target, minf(dt / maxf(Tuning.wind_blend_time, 0.001), 1.0))
+			x += vxp * dt
+			if Tuning.edge_wrap:
+				if x > Lanes.W + half:
+					x -= Lanes.W + 2.0 * half
+				elif x < -half:
+					x += Lanes.W + 2.0 * half
+		out[k] = Vector2(x, y)
 
 ## Centre of hit circle i, and its radius (scaled and made forgiving).
 func hit_pos(i: int) -> Vector2:

@@ -101,7 +101,7 @@ var _over33 := 0                       # frames over 33 ms in the last window
 var _frames_win := 0
 var _prof_text := ""
 ## Where the three tool buttons are (below the ground line). Touches are handled by Main (so a second finger works
-## while the first swipes); the buttons themselves are only drawn.
+## while the first holds the burner); the buttons themselves are only drawn.
 const TOOL_RECTS := [Rect2(30, 1742, 320, 110), Rect2(380, 1742, 320, 110), Rect2(730, 1742, 320, 110)]
 const TOOL_NAMES := ["SANDBAG", "ANCHOR", "QUICK VENT"]
 const GRAPH_N := 120
