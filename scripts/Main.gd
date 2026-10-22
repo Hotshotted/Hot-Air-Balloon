@@ -234,8 +234,7 @@ func _prewarm() -> void:
 			t_burst = now
 			lanes.burst(Vector2(300, 900), Lanes.C_TANK, 12, 300.0)
 			lanes.burst(Vector2(780, 900), Color(1.0, 0.5, 0.15), 12, 300.0)
-		balloon.heat = 1.0
-		balloon.queue_redraw()
+		balloon.warm_visuals()   # (every part of the rig, the glow, flame, ropes and streamers drawn for real)
 		if DebugFlags.preview_enabled():   # (warms the debug preview's meshes too)
 			lanes.preview_balloon = balloon
 			balloon.predict(true)

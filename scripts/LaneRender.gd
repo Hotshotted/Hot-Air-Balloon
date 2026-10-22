@@ -21,8 +21,8 @@ var _th_mat: ShaderMaterial
 var _thc_mat: ShaderMaterial
 var _thc: MultiMeshInstance2D
 var _streaks: MultiMeshInstance2D
-var _chevs: MultiMeshInstance2D
-var _streamers: MultiMeshInstance2D
+var _clouds: MultiMeshInstance2D
+var _birds: MultiMeshInstance2D
 var _hz: Array = []                      # per mesh id: MultiMeshInstance2D
 var _hz_buf: Array = []                  # per mesh id: PackedFloat32Array (12 floats per instance)
 var _hz_n := PackedInt32Array()          # per mesh id: instances in use
@@ -52,8 +52,8 @@ var _cn: MultiMeshInstance2D
 var _tk_buf := PackedFloat32Array()
 var _cn_buf := PackedFloat32Array()
 var _streak_buf := PackedFloat32Array()  # 16 floats per instance: transform 8, colour 4, custom 4
-var _chev_buf := PackedFloat32Array()
-var _streamer_buf := PackedFloat32Array()
+var _cloud_buf := PackedFloat32Array()
+var _bird_buf := PackedFloat32Array()
 var _thc_buf := PackedFloat32Array()
 var _scroll := PackedFloat32Array()
 var _dir := PackedFloat32Array()
@@ -82,11 +82,11 @@ func _ready() -> void:
 	_wind_mat = ShaderMaterial.new()
 	_wind_mat.shader = load("res://shaders/wind.gdshader")
 	_streaks = _make_mm(_streak_mesh(), Lanes.MAX_LANES * Lanes.PARTS_PER_LANE, true, _wind_mat)
-	_chevs = _make_mm(_chevron_mesh(), Lanes.MAX_LANES * Lanes.CHEVRONS_PER_LANE, true, _wind_mat)
-	_streamers = _make_mm(_streamer_mesh(), Lanes.MAX_LANES * Lanes.STREAMERS_PER_LANE, true, _wind_mat)
+	_clouds = _make_mm(_cloud_mesh(), Lanes.MAX_LANES * Lanes.CLOUDS_PER_LANE, true, _wind_mat)
+	_birds = _make_mm(_bird_mesh(), Lanes.MAX_LANES * Lanes.BIRDS_PER_LANE, true, _wind_mat)
 	_streak_buf.resize(Lanes.MAX_LANES * Lanes.PARTS_PER_LANE * WIND_STRIDE)
-	_chev_buf.resize(Lanes.MAX_LANES * Lanes.CHEVRONS_PER_LANE * WIND_STRIDE)
-	_streamer_buf.resize(Lanes.MAX_LANES * Lanes.STREAMERS_PER_LANE * WIND_STRIDE)
+	_cloud_buf.resize(Lanes.MAX_LANES * Lanes.CLOUDS_PER_LANE * WIND_STRIDE)
+	_bird_buf.resize(Lanes.MAX_LANES * Lanes.BIRDS_PER_LANE * WIND_STRIDE)
 	# --- thermals ---
 	_th_mat = ShaderMaterial.new()
 	_th_mat.shader = load("res://shaders/thermal.gdshader")
@@ -157,8 +157,8 @@ func _ready() -> void:
 	# the wind of every layer, constant: arrows (1-4 by strength) and px/s at the right edge
 	_wind_shown.resize(Lanes.MAX_LANES)
 	for i in Lanes.MAX_LANES:
-		var wl := Ui.label("", 28, HORIZONTAL_ALIGNMENT_RIGHT, Vector2(Lanes.W - 190.0, 0), Vector2(182, 40))
-		wl.modulate = Color(1, 1, 1, 0.8)
+		var wl := Ui.label("", 22, HORIZONTAL_ALIGNMENT_RIGHT, Vector2(Lanes.W - 190.0, 0), Vector2(182, 40))
+		wl.modulate = Color(1, 1, 1, 0.34)
 		wl.visible = false
 		add_child(wl)
 		_wind_labels.append(wl)
@@ -181,14 +181,10 @@ func _ready() -> void:
 	_pv_ghost_buf.resize(Lanes.MAX_HAZ * HZ_STRIDE)
 	_built = true
 
-## "<<< 120" / ">>> 120": arrows by strength (one per 45 px/s), the speed in px/s rounded to 5. A layer at rest shows "0".
+## The subtle speed cue at a layer's edge: just the speed in px/s rounded to 5 (the direction and the speed are read from
+## how the clouds, birds and particles of the layer move); for layers whose speeds are alike.
 static func wind_text(w: float) -> String:
-	var mag := int(round(absf(w) / 5.0)) * 5
-	if mag == 0:
-		return "0"
-	var n := clampi(1 + int(absf(w) / 45.0), 1, 4)
-	var a := ">>>>".substr(0, n) if w > 0.0 else "<<<<".substr(0, n)
-	return "%s %d" % [a, mag]
+	return str(int(round(absf(w) / 5.0)) * 5)
 
 func _make_mm(mesh: Mesh, count: int, colors: bool, mat: Material, _stride: int = WIND_STRIDE) -> MultiMeshInstance2D:
 	var mm := MultiMesh.new()
@@ -211,18 +207,26 @@ func _streak_mesh() -> ArrayMesh:
 	m.poly([Vector2(0, -1.5), Vector2(-1, -1.5), Vector2(-1, 1.5), Vector2(0, 1.5)], Color.WHITE, false)
 	return m.build()
 
-func _chevron_mesh() -> ArrayMesh:
-	var m := ShapeMesh.new()
-	m.polyline([Vector2(-12, -16), Vector2(12, 0), Vector2(-12, 16)], 5.0, Color.WHITE)
-	return m.build()
-
-func _streamer_mesh() -> ArrayMesh:
+## A cloud: a flat-bottomed puff (white fill, UV.x 0) with a soft blue-grey outline (UV.x 1); the shader tints both.
+func _cloud_mesh() -> ArrayMesh:
 	var m := ShapeMesh.new()
 	var pts: Array = []
-	for p in 7:
-		pts.append(Vector2(float(p) * 16.0, 0))
-	m.polyline(pts, 9.0, Color.WHITE, 0.0)   # the black underlay
-	m.polyline(pts, 5.0, Color.WHITE, 1.0)   # the coloured ribbon
+	for i in 13:   # the bumpy top: overlapping domes
+		var u := float(i) / 12.0
+		var dome := absf(sin(u * PI * 2.5))
+		pts.append(Vector2(lerpf(-38.0, 38.0, u), -4.0 - 22.0 * pow(dome, 0.7) * (1.0 - absf(u - 0.5) * 0.9)))
+	pts.append(Vector2(38.0, 8.0))
+	pts.append(Vector2(-38.0, 8.0))
+	m.poly(pts, Color.WHITE, false, 0.0)
+	var outline: Array = pts.duplicate()
+	outline.append(pts[0])
+	m.polyline(outline, 3.0, Color.WHITE, 1.0)
+	return m.build()
+
+## A tiny far-off bird: a V that flaps (the shader moves the wing tips).
+func _bird_mesh() -> ArrayMesh:
+	var m := ShapeMesh.new()
+	m.polyline([Vector2(-9, 0), Vector2(0, 3), Vector2(9, 0)], 2.6, Color.WHITE, 2.0)
 	return m.build()
 
 func _thermal_chevron_mesh() -> ArrayMesh:
@@ -279,22 +283,21 @@ func on_setup() -> void:
 		var strength := clampf(absf(L.lane_base[i]) / 200.0, 0.0, 1.0)
 		for j in Lanes.PARTS_PER_LANE:
 			_wind_instance(_streak_buf, np, float(i), rng.randf() * Lanes.W, rng.randf_range(0.1, 0.9), 0.0,
-				rng.randf_range(0.6, 1.4), rng.randf_range(24.0, 70.0) * (0.6 + strength), 0.55, 0.0)
+				1.0, rng.randf_range(24.0, 70.0) * (0.6 + strength), 0.5, 0.0)
 			np += 1
-		var chev_n := 2 + int(strength * 2.0)   # a stronger wind shows more chevrons
-		for c in Lanes.CHEVRONS_PER_LANE:
-			_wind_instance(_chev_buf, nc, float(i), float(c) * Lanes.W / float(Lanes.CHEVRONS_PER_LANE), 0.5, 1.0,
-				1.0, 1.0, 0.3 if c < chev_n else 0.0, 0.0)
+		for c in Lanes.CLOUDS_PER_LANE:   # clouds: every layer has some, sized by luck, all moving at exactly the layer's wind
+			_wind_instance(_cloud_buf, nc, float(i), (float(c) + rng.randf_range(0.0, 0.8)) * Lanes.W / float(Lanes.CLOUDS_PER_LANE),
+				rng.randf_range(0.18, 0.62), 1.0, 1.0, rng.randf_range(0.8, 1.5), 0.5, 0.0)
 			nc += 1
-		for j in Lanes.STREAMERS_PER_LANE:
-			_wind_instance(_streamer_buf, ns, float(i), rng.randf() * Lanes.W, 0.5, 2.0, 0.0, rng.randf() * TAU, 1.0, float((i + j) % 2))
+		for j in Lanes.BIRDS_PER_LANE:
+			_wind_instance(_bird_buf, ns, float(i), rng.randf() * Lanes.W, rng.randf_range(0.2, 0.8), 2.0, 1.0, rng.randf() * TAU, 0.5, 0.0)
 			ns += 1
 	_streaks.multimesh.visible_instance_count = np
-	_chevs.multimesh.visible_instance_count = nc
-	_streamers.multimesh.visible_instance_count = ns
+	_clouds.multimesh.visible_instance_count = nc
+	_birds.multimesh.visible_instance_count = ns
 	_streaks.multimesh.buffer = _streak_buf
-	_chevs.multimesh.buffer = _chev_buf
-	_streamers.multimesh.buffer = _streamer_buf
+	_clouds.multimesh.buffer = _cloud_buf
+	_birds.multimesh.buffer = _bird_buf
 	_wind_mat.set_shader_parameter("lane_h", L.lane_h)
 	_wind_mat.set_shader_parameter("band_bottom", Lanes.BAND_BOTTOM)
 	# thermals
@@ -346,7 +349,6 @@ func on_setup() -> void:
 		_wind_shown[i] = -9999
 		if i < L.n_lanes:
 			wl.position = Vector2(Lanes.W - 190.0, Lanes.BAND_BOTTOM - (float(i) + 0.5) * L.lane_h - 22.0)
-			wl.add_theme_font_size_override("font_size", 22 + int(clampf(absf(L.lane_base[i]) / 170.0, 0.0, 1.0) * 14.0))
 	# haze
 	_haze.visible = L.haze_on
 	if L.haze_on:

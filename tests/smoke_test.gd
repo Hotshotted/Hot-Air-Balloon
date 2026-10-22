@@ -406,8 +406,6 @@ func _run() -> void:
 	# --- constant, readable winds ---
 	var cs_const_all := true
 	var cs_labels_ok := true
-	var cs_big_font := 0
-	var cs_small_font := 99
 	for r in 4:
 		lanes.setup(FlightsS.eff_level(r, 3, 2), false, 600 + r, r)
 		var w_before := PackedFloat32Array(lanes.lane_wind)
@@ -419,12 +417,9 @@ func _run() -> void:
 			if lanes.lane_rev[i] == 0.0:
 				var txt: String = lanes.render._wind_labels[i].text
 				var mag := int(round(absf(lanes.lane_wind[i]) / 5.0)) * 5
-				cs_labels_ok = cs_labels_ok and txt.begins_with(">" if lanes.lane_wind[i] > 0.0 else "<") and txt.ends_with(str(mag)) and lanes.render._wind_labels[i].visible
-				var fs: int = lanes.render._wind_labels[i].get_theme_font_size("font_size")
-				cs_big_font = maxi(cs_big_font, fs)
-				cs_small_font = mini(cs_small_font, fs)
+				cs_labels_ok = cs_labels_ok and txt == str(mag) and lanes.render._wind_labels[i].visible and lanes.render._wind_labels[i].modulate.a < 0.5
 	check(cs_const_all, "every layer's wind is constant for 20 s in all four regions (no random gusts)")
-	check(cs_labels_ok and cs_big_font > cs_small_font, "every layer shows its direction and speed, bigger for stronger winds (font %d..%d)" % [cs_small_font, cs_big_font])
+	check(cs_labels_ok, "every layer has only a subtle speed cue (a faint number, no arrows): direction and speed are read from the drifting sky")
 	# --- pickups hang still ---
 	lanes.setup(6.0, false, 77, 1)
 	var cs_pk0 := Array(lanes.pk_x.slice(0, 9))
@@ -434,6 +429,75 @@ func _run() -> void:
 	check(Array(lanes.pk_x.slice(0, 9)) == cs_pk0 and Array(lanes.cn_x.slice(0, 9)) == cs_cn0, "propane tanks and coins hang still (the balloon sweeps past)")
 	m.start_flight(0)
 	b = m.balloon
+
+	# ---- 3c. readable physics: the balloon itself shows heat, burner, wind and swing ----
+	print("3c. readable physics")
+	m.start_flight(0)
+	clear_sky(m)
+	b = m.balloon
+	lanes = m.lanes
+	lanes.lane_wind.fill(0.0)
+	b.set_altitude(LanesS.BAND_BOTTOM - 2.5 * lanes.lane_h)
+	check(b.env_node != null and b.basket_node != null and b.ropes != null and b.streamers != null and b.flame.get_parent() == b.basket_node, "the rig: envelope, basket (with flame and streamers) and ropes are separate nodes")
+	b.step(1.0 / 60.0, false, true)
+	check(b.air == 0.0 and b.flame_power == 0.0, "cold: no glow, no flame")
+	var rp_air_hist := []
+	var rp_sputter_seen := false
+	for i in 45:
+		b.step(1.0 / 60.0, true, true)
+		rp_air_hist.append(b.air)
+		if b.burning and b.heat < 0.6 and b.sputter < 1.0:
+			rp_sputter_seen = true
+		b.set_altitude(LanesS.BAND_BOTTOM - 2.5 * lanes.lane_h)
+	check(b.air > 0.9 and rp_air_hist[10] < rp_air_hist[30], "the envelope's air heats while the burner fires (air %.2f)" % b.air)
+	check(rp_sputter_seen, "the flame sputters while it lights")
+	check(b.flame_power > 0.9 and b.sputter == 1.0, "...then roars steadily at full output (power %.2f)" % b.flame_power)
+	var rp_env_air: float = b._env_mat.get_shader_parameter("air")
+	check(absf(rp_env_air - b.air) < 0.001, "the envelope shader gets the air temperature every frame")
+	for i in 18:
+		b.step(1.0 / 60.0, false, true)
+	check(b.heat < 0.45 and b.air > 0.5 and b.rise > 0.0, "released: the burner has died down but the envelope is still hot (air %.2f) and the balloon rises on stored heat (%.0f px/s)" % [b.air, b.rise])
+	var rp_air_a: float = b.air
+	for i in 90:
+		b.step(1.0 / 60.0, false, true)
+	check(b.air < rp_air_a - 0.3 and b.air < rp_air_a - 0.3, "...then it cools as the balloon slows (air %.2f)" % b.air)
+	# a faster, reversed layer: the basket swings, then settles
+	b.reset()
+	lanes.lane_wind.fill(0.0)
+	lanes.lane_wind[2] = 150.0
+	lanes.lane_wind[3] = -150.0
+	var rp_cy2: float = LanesS.BAND_BOTTOM - 2.5 * lanes.lane_h
+	var rp_cy3: float = LanesS.BAND_BOTTOM - 3.5 * lanes.lane_h
+	b.set_altitude(rp_cy2)
+	for i in 120:
+		b.step(1.0 / 60.0, false, true)
+		b.set_altitude(rp_cy2)
+	check(absf(b.swing) < 0.03 and b.lean > 0.05, "steady in a layer: the basket hangs still (%.3f) and the envelope leans downwind (%.2f)" % [b.swing, b.lean])
+	b.set_altitude(rp_cy3)
+	var rp_peak := 0.0
+	for i in 40:
+		b.step(1.0 / 60.0, false, true)
+		b.set_altitude(rp_cy3)
+		rp_peak = maxf(rp_peak, absf(b.swing))
+	check(rp_peak > 0.12, "entering a reversed layer swings the basket on its ropes (rp_peak %.2f rad)" % rp_peak)
+	check(b.lean < 0.0 or b._lean_v < 0.0, "...and the envelope swings over to lean the other way")
+	for i in 80:
+		b.step(1.0 / 60.0, false, true)
+		b.set_altitude(rp_cy3)
+	check(absf(b.swing) < 0.05 and b.lean < -0.05, "...it settles within about a second (swing %.3f, lean %.2f)" % [b.swing, b.lean])
+	check(is_equal_approx(b.wind_alt, -150.0), "the streamers' wind is the wind at the balloon's exact altitude (%.0f)" % b.wind_alt)
+	b.set_altitude(LanesS.BAND_BOTTOM - 3.0 * lanes.lane_h)   # right on the boundary between the two layers
+	b.step(1.0 / 60.0, false, true)
+	check(absf(b.wind_alt) < 140.0, "...blending smoothly across a layer boundary (%.0f)" % b.wind_alt)
+	# the sky: everything in a layer drifts at exactly its wind
+	lanes.setup(3.0, false, 321, 1)
+	var rp_rdr = lanes.render
+	var rp_sc0: float = rp_rdr._scroll[1]
+	lanes.update(0.5)
+	check(absf((rp_rdr._scroll[1] - rp_sc0) - lanes.lane_wind[1] * 0.5) < 0.01, "a layer's clouds, birds and particles scroll by exactly the layer's wind (%.1f px in 0.5 s)" % (rp_rdr._scroll[1] - rp_sc0))
+	check(rp_rdr._clouds.multimesh.visible_instance_count == lanes.n_lanes * LanesS.CLOUDS_PER_LANE and rp_rdr._birds.multimesh.visible_instance_count == lanes.n_lanes * LanesS.BIRDS_PER_LANE, "every layer has its clouds and birds")
+	check(load("res://shaders/balloon_env.gdshader") != null and load("res://shaders/thermal.gdshader") != null and load("res://shaders/storm.gdshader") != null and load("res://shaders/wind.gdshader") != null, "the envelope, thermal, storm and wind shaders load")
+	m.start_flight(0)
 
 	# ---- 4. hazards ----
 	print("4. hazards")
@@ -1407,10 +1471,10 @@ func _run() -> void:
 					over_cap += 1
 			max_total = maxi(max_total, sky_total)
 			var rd = m.lanes.render
-			if rd._streaks.multimesh.visible_instance_count > m.lanes.n_lanes * LanesS.PARTS_PER_LANE or rd._streamers.multimesh.visible_instance_count > m.lanes.n_lanes * LanesS.STREAMERS_PER_LANE or rd._chevs.multimesh.visible_instance_count > m.lanes.n_lanes * LanesS.CHEVRONS_PER_LANE:
+			if rd._streaks.multimesh.visible_instance_count > m.lanes.n_lanes * LanesS.PARTS_PER_LANE or rd._birds.multimesh.visible_instance_count > m.lanes.n_lanes * LanesS.BIRDS_PER_LANE or rd._clouds.multimesh.visible_instance_count > m.lanes.n_lanes * LanesS.CLOUDS_PER_LANE:
 				over_cap += 1
 	check(over_cap == 0 and max_haz <= 4 and max_total <= LanesS.MAX_HAZ, "hard caps hold in every Flight: at most %d hazards per layer, %d in the sky (cap %d)" % [max_haz, max_total, LanesS.MAX_HAZ])
-	check(LanesS.PARTS_PER_LANE <= 8 and LanesS.STREAMERS_PER_LANE <= 1 and LanesS.CHEVRONS_PER_LANE <= 4 and LanesS.FX_MAX <= 24, "wind streaks (8), chevrons (4), streamers (1) per layer and sparks (24) are capped")
+	check(LanesS.PARTS_PER_LANE <= 8 and LanesS.BIRDS_PER_LANE <= 2 and LanesS.CLOUDS_PER_LANE <= 3 and LanesS.FX_MAX <= 24, "wind particles (8), clouds (3), birds (2) per layer and sparks (24) are capped")
 	check(tn.density_max <= 3.5 and tn.wind_max <= 180.0 and tn.jet_wind <= 260.0, "density and wind speed are capped at moderate values")
 	# The MultiMesh buffers mirror the simulation.
 	m.lanes.setup(FlightsS.eff_level(1, 5, 4), false, 4242, 1)

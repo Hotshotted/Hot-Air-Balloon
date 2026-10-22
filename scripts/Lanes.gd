@@ -21,8 +21,8 @@ const MAX_LANES := 9
 const MAX_PER_LANE := 4
 const MAX_HAZ := MAX_LANES * MAX_PER_LANE
 const PARTS_PER_LANE := 8
-const CHEVRONS_PER_LANE := 4
-const STREAMERS_PER_LANE := 1
+const CLOUDS_PER_LANE := 3     # drifting clouds per layer (they move at exactly the layer's wind)
+const BIRDS_PER_LANE := 2      # tiny faint far-off birds per layer (ditto)
 const FX_MAX := 24
 const MAX_COINS := MAX_LANES
 const MAX_STARS := 5
@@ -567,6 +567,20 @@ func lane_of(y: float) -> int:
 
 func wind_at(y: float) -> float:
 	return lane_wind[lane_of(y)]
+
+## The wind at exactly height y for DISPLAY (the streamers, the lean): the layer's wind, blended with the next layer's across
+## the last pixels before a boundary so the cue changes smoothly as the balloon climbs through (the physics uses wind_at).
+func wind_smooth(y: float) -> float:
+	var i := lane_of(y)
+	var top := BAND_BOTTOM - float(i + 1) * lane_h
+	var d_top := y - top                 # distance below this layer's upper edge
+	var d_bot := top + lane_h - y        # distance above its lower edge
+	const BLEND := 40.0
+	if d_top < BLEND and i + 1 < n_lanes:
+		return lerpf(lane_wind[i], lane_wind[i + 1], smoothstep(BLEND, 0.0, d_top) * 0.5)
+	if d_bot < BLEND and i > 0:
+		return lerpf(lane_wind[i], lane_wind[i - 1], smoothstep(BLEND, 0.0, d_bot) * 0.5)
+	return lane_wind[i]
 
 # ---------------------------------------------------------------------------------------------------------
 # Simulation

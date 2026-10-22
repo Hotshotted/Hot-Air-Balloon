@@ -9,6 +9,8 @@ const WIDTH := 84.0            # design width (before Tuning.balloon_scale)
 const BASKET_BOTTOM := 84.0    # design distance from the envelope centre (the node origin) to the basket's base
 ## Hit circles in design units: [dy from the origin, radius]. Envelope top, envelope bottom, basket.
 const HIT := [[-10.0, 38.0], [24.0, 22.0], [72.0, 13.0]]
+const NECK_Y := 44.0           # design y of the envelope's neck: the envelope leans about it
+const BASKET_PIVOT := 50.0     # design y where the basket hangs: it swings about it
 const PRED_N := 12             # points of each drift-preview line
 const PRED_SUB := 8            # simulation steps between two points
 
@@ -18,11 +20,25 @@ var vx := 0.0          # sideways speed, px/s
 var heat := 0.0        # 0..1, how hot the air is
 var burning := false   # the burner is firing right now
 var on_ground := true
-var sway := 0.0
 var _t := 0.0
 
-var flame: Node2D       # the burner flame: its own tiny node, redrawn only while it burns
+# --- the rig: the envelope (leans, glows), the swinging basket with its flame and streamers, the ropes between them ---
+var env_node: BalloonEnvelope
+var basket_node: BalloonBasket
+var ropes: BalloonRopes
+var flame: BalloonFlame
+var streamers: BalloonStreamers
+var _env_mat: ShaderMaterial
 var _flame_on := false
+var air := 0.0           # the temperature of the air in the envelope, 0..1: it follows `heat` up fast and cools slowly
+var flame_power := 0.0   # burner output, 0..1 (what the flame draws)
+var sputter := 1.0       # 1 = steady; below 1 while the burner is lighting
+var lean := 0.0          # the envelope's lean (rad) with the wind at its altitude
+var swing := 0.0         # the basket's swing (rad) on its ropes
+var wind_alt := 0.0      # the wind at the balloon's exact altitude (display)
+var _lean_v := 0.0
+var _swing_v := 0.0
+var _vx_prev := 0.0
 var anchor_left := 0.0   # Anchor (Sahara): seconds of no sideways drift left
 var vent_left := 0.0     # Quick Vent (Himalayas): seconds of strong descent left
 var boost_left := 0.0    # Sandbag (Alps): seconds of full climb push left
@@ -40,9 +56,26 @@ var pred_burn := PackedVector2Array()
 var pred_rel := PackedVector2Array()
 
 func _ready() -> void:
+	ropes = BalloonRopes.new()
+	ropes.balloon = self
+	add_child(ropes)
+	env_node = BalloonEnvelope.new()
+	env_node.balloon = self
+	env_node.position = Vector2(0, NECK_Y)
+	_env_mat = ShaderMaterial.new()
+	_env_mat.shader = load("res://shaders/balloon_env.gdshader")
+	env_node.material = _env_mat
+	add_child(env_node)
+	basket_node = BalloonBasket.new()
+	basket_node.balloon = self
+	basket_node.position = Vector2(0, BASKET_PIVOT)
+	add_child(basket_node)
+	streamers = BalloonStreamers.new()
+	streamers.balloon = self
+	basket_node.add_child(streamers)
 	flame = BalloonFlame.new()
 	flame.balloon = self
-	add_child(flame)
+	basket_node.add_child(flame)
 	pred_burn.resize(PRED_N)
 	pred_rel.resize(PRED_N)
 	reset()
@@ -65,7 +98,15 @@ func reset() -> void:
 	ceiling_y = -100000.0
 	burning = false
 	on_ground = true
-	sway = 0.0
+	air = 0.0
+	flame_power = 0.0
+	sputter = 1.0
+	lean = 0.0
+	swing = 0.0
+	wind_alt = 0.0
+	_lean_v = 0.0
+	_swing_v = 0.0
+	_vx_prev = 0.0
 	_wind_lane = -2
 	_blend_t = 99.0
 	env_id = Save.equipped(Cosmetics.ENV)
@@ -74,8 +115,8 @@ func reset() -> void:
 	position = Vector2(Lanes.W * 0.5, floor_y())
 	rotation = 0.0
 	scale = Vector2(s(), s())
-	queue_redraw()   # the body: only now (a cosmetics change or a fresh leg)
-	flame.queue_redraw()
+	redraw_body()   # the envelope and basket: only now (a cosmetics change or a fresh leg)
+	_update_rig(0.0)
 
 ## Teleport to height y at rest (tests).
 func set_altitude(y: float) -> void:
@@ -134,13 +175,58 @@ func step(dt: float, hold: bool, fuel_left: bool, lift: float = 0.0, climb_mult:
 		x = half
 		vx = maxf(vx, 0.0)
 	position.x = x
-	sway += (clampf(vx / 300.0, -1.0, 1.0) * 0.2 - sway) * (1.0 - exp(-4.0 * dt))
-	rotation = sway
 	scale = Vector2(s(), s())
-	var on := heat > 0.04
-	if on or _flame_on:   # (the node's own transform moves the whole balloon: no redraw needed)
+	_update_rig(dt)
+
+## Redraw the envelope and the basket (their cosmetics changed, or a fresh leg).
+func redraw_body() -> void:
+	env_node.queue_redraw()
+	basket_node.queue_redraw()
+
+## Pre-warm: show the balloon fully hot, burning, leaning and swinging so every shader and node draws once behind the splash.
+func warm_visuals() -> void:
+	heat = 1.0
+	air = 1.0
+	burning = true
+	wind_alt = 150.0
+	_update_rig(1.0 / 60.0)
+	lean = 0.2
+	swing = 0.25
+	basket_node.rotation = swing
+	env_node.rotation = lean
+	burning = false
+
+## The readable physics, every frame: the air's heat, the flame, the envelope's lean and the basket's swing. Nothing is
+## drawn here except the small per-frame nodes (flame, ropes, streamers); the envelope's glow is a shader uniform.
+func _update_rig(dt: float) -> void:
+	# the air in the envelope: heats at the burner's pace, cools slowly (so it is still hot while the balloon coasts up)
+	air = move_toward(air, heat, (6.0 if heat > air else 0.9) * dt)
+	# the burner: its output follows the heat; while it is lighting (heat still low) it sputters
+	flame_power = heat if (burning or heat > 0.04) else 0.0
+	sputter = 1.0
+	if burning and heat < 0.6:
+		sputter = 0.35 + 0.65 * (1.0 if sin(_t * 61.0) * sin(_t * 23.0 + 1.0) >= 0.0 else 0.0)
+	wind_alt = lanes.wind_smooth(position.y) if lanes != null else 0.0
+	if dt > 0.0:
+		var h := minf(dt, 0.05)
+		# lean: toward the wind at this altitude, and with the air that is not yet moving with it
+		var lean_target := clampf(wind_alt / 260.0 * 0.24 + (wind_alt - vx) / 170.0 * 0.2, -0.34, 0.34)
+		_lean_v += ((lean_target - lean) * 49.0 - 2.0 * 0.72 * 7.0 * _lean_v) * h
+		lean += _lean_v * h
+		# swing: a pendulum on its ropes, shaken by the sideways acceleration (a faster or reversed layer), settling in ~1 s
+		var ax := (vx - _vx_prev) / dt
+		_vx_prev = vx
+		var sw_target := clampf(-ax * 0.00032, -0.7, 0.7)
+		_swing_v += ((sw_target - swing) * 36.0 - 2.0 * 0.35 * 6.0 * _swing_v) * h
+		swing = clampf(swing + _swing_v * h, -0.7, 0.7)
+	_env_mat.set_shader_parameter("air", air)
+	env_node.rotation = lean
+	basket_node.rotation = swing
+	ropes.queue_redraw()
+	streamers.queue_redraw()
+	if flame_power > 0.04 or _flame_on:
 		flame.queue_redraw()
-	_flame_on = on
+	_flame_on = flame_power > 0.04
 
 ## Sideways speed: exactly the wind of the layer the balloon is in (0 on the ground and while anchored); blended
 ## over wind_blend_time only when the layer changes.
@@ -230,10 +316,6 @@ func hit_pos(i: int) -> Vector2:
 
 func hit_radius(i: int) -> float:
 	return HIT[i][1] * s() * Tuning.hit_forgiveness
-
-func _draw() -> void:
-	body_draws += 1
-	BalloonArt.shared().draw_body(self, env_id, basket_id, pass_id, 4.0 / s())
 
 ## The time the flame flickers with.
 func flicker_time() -> float:

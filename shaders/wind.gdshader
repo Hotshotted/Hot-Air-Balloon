@@ -1,8 +1,9 @@
 shader_type canvas_item;
-// Wind decoration for every layer in three MultiMeshes (streaks, chevrons, streamers) sharing this one material.
-// Nothing is moved from script: each layer's accumulated scroll (px) and direction come in as two uniform arrays,
-// and every instance works out its own position. INSTANCE_CUSTOM = (layer, x0, y fraction in the layer, mode);
-// COLOR = (parallax factor, size, alpha, hue); for streamers COLOR.g is the wave phase. mode 0 streak, 1 chevron, 2 streamer.
+// The sky's wind decoration for every layer in three MultiMeshes (particles, clouds, far-off birds) sharing this one
+// material. Nothing is moved from script: each layer's accumulated scroll (px) and direction come in as two uniform arrays,
+// and every instance works out its own position. EVERYTHING in a layer drifts at exactly the layer's wind (scroll), so the
+// sky ahead is readable from how it moves. INSTANCE_CUSTOM = (layer, x0, y fraction in the layer, mode);
+// COLOR = (unused, size, alpha, phase). mode 0 particle, 1 cloud, 2 bird.
 uniform float scroll[9];
 uniform float dir[9];
 uniform float lane_h = 200.0;
@@ -17,21 +18,19 @@ void vertex() {
 	float y = top + INSTANCE_CUSTOM.z * lane_h;
 	int mode = int(INSTANCE_CUSTOM.w + 0.5);
 	float alpha = COLOR.b;
+	float size = COLOR.g;
 	if (mode == 0) {
-		float x = mod(INSTANCE_CUSTOM.y + sc * COLOR.r + 80.0, W + 160.0) - 80.0;
-		VERTEX = vec2(x + d * VERTEX.x * COLOR.g, y + VERTEX.y);
+		float x = mod(INSTANCE_CUSTOM.y + sc + 80.0, W + 160.0) - 80.0;
+		VERTEX = vec2(x + d * VERTEX.x * size, y + VERTEX.y);
 		COLOR = vec4(1.0, 1.0, 1.0, alpha);
 	} else if (mode == 1) {
-		float x = mod(INSTANCE_CUSTOM.y + sc * 0.6 + 50.0, W + 100.0) - 50.0;
-		VERTEX = vec2(x + d * VERTEX.x, y + VERTEX.y);
-		COLOR = vec4(1.0, 1.0, 1.0, alpha);
+		float x = mod(INSTANCE_CUSTOM.y + sc + 200.0, W + 400.0) - 200.0;
+		VERTEX = vec2(x + VERTEX.x * size, y + VERTEX.y * size);
+		COLOR = UV.x > 0.5 ? vec4(0.42, 0.5, 0.66, alpha * 0.9) : vec4(1.0, 1.0, 1.0, alpha * 0.8);
 	} else {
-		float x = mod(INSTANCE_CUSTOM.y + sc * 0.8 + 120.0, W + 240.0) - 120.0;
-		float p = VERTEX.x / 16.0;
-		float wave = sin(TIME * 5.0 + COLOR.g + p * 0.9) * 7.0 * (p / 6.0);
-		VERTEX = vec2(x - d * VERTEX.x, y + VERTEX.y + wave);
-		// UV.x tells the black underlay (0) from the coloured ribbon (1); the instance hue 0 is yellow, 1 pink
-		vec3 ribbon = mix(vec3(1.0, 0.95, 0.4), vec3(1.0, 0.5, 0.65), COLOR.a);
-		COLOR = UV.x > 0.5 ? vec4(ribbon, 1.0) : vec4(0.0, 0.0, 0.0, 1.0);
+		float x = mod(INSTANCE_CUSTOM.y + sc + 60.0, W + 120.0) - 60.0;
+		float flap = sin(TIME * 6.0 + size) * abs(VERTEX.x) * 0.55;
+		VERTEX = vec2(x + d * VERTEX.x, y + VERTEX.y - flap);
+		COLOR = vec4(0.18, 0.22, 0.34, alpha * 0.7);
 	}
 }

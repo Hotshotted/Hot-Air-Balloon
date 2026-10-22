@@ -28,6 +28,7 @@ var _fish_fin: Array
 var _baskets: Array = []             # per basket: list of [poly, closed outline, colour]
 var _flame := PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
 var _flame_in := PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
+var _f5 := PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
 var _zig := PackedVector2Array()
 var _s3 := PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
 var _s4 := PackedVector2Array([Vector2.ZERO, Vector2.ZERO, Vector2.ZERO, Vector2.ZERO])
@@ -167,9 +168,8 @@ func _fill(ci: CanvasItem, pair: Array, fill: Color, w: float) -> void:
 	ci.draw_colored_polygon(pair[0], fill)
 	ci.draw_polyline(pair[1], Color.BLACK, w)
 
-## Draw the balloon WITHOUT its flame (env / basket / pas: catalogue indices). The game balloon draws this only when
-## its cosmetics change; the flame is a separate, tiny node.
-func draw_body(ci: CanvasItem, env: int, basket: int, pas: int, w: float) -> void:
+## The envelope alone (no ropes, burner, basket): what the game balloon's glowing, leaning envelope node draws.
+func draw_envelope(ci: CanvasItem, env: int, w: float) -> void:
 	var c1: Color = Cosmetics.ENV_C1[env]
 	var c2: Color = Cosmetics.ENV_C2[env]
 	var c3: Color = Cosmetics.ENV_C3[env]
@@ -216,9 +216,14 @@ func draw_body(ci: CanvasItem, env: int, basket: int, pas: int, w: float) -> voi
 			ci.draw_arc(Vector2(8, -22), 22.0, PI * 0.1, PI * 0.5, 8, Color.BLACK, w * 0.6)
 			ci.draw_circle(Vector2(18, -34), 7.0, Color.WHITE)
 			ci.draw_circle(Vector2(19, -34), 3.5, Color.BLACK)
-	# Ropes, burner and flame.
+
+## The ropes, as static lines (the map marker and the shop; the game balloon draws moving ropes instead).
+func draw_ropes_static(ci: CanvasItem, w: float) -> void:
 	ci.draw_line(Vector2(-16, 44), Vector2(-12, 60), Color.BLACK, w)
 	ci.draw_line(Vector2(16, 44), Vector2(12, 60), Color.BLACK, w)
+
+## The burner, passenger and basket (no ropes, no flame): what the game balloon's swinging basket node draws.
+func draw_basket(ci: CanvasItem, basket: int, pas: int, w: float) -> void:
 	ci.draw_rect(Rect2(-4, 52, 8, 6), Color(0.45, 0.47, 0.52))
 	ci.draw_rect(Rect2(-4, 52, 8, 6), Color.BLACK, false, w * 0.6)
 	if pas > 0:   # the passenger peeks over the rim, behind the basket's front
@@ -228,20 +233,32 @@ func draw_body(ci: CanvasItem, env: int, basket: int, pas: int, w: float) -> voi
 		ci.draw_polyline(part[1], Color.BLACK, w)
 	_basket_detail(ci, basket, w)
 
+## Draw the balloon WITHOUT its flame (env / basket / pas: catalogue indices): the map marker and the shop.
+func draw_body(ci: CanvasItem, env: int, basket: int, pas: int, w: float) -> void:
+	draw_envelope(ci, env, w)
+	draw_ropes_static(ci, w)
+	draw_basket(ci, basket, pas, w)
 
-## The burner flame alone (heat 0..1, t for the flicker). Cheap: two triangles.
-func draw_flame(ci: CanvasItem, heat: float, t: float) -> void:
+## The burner flame alone (power 0..1 = the burner output, t for the flicker, `sputter` 0..1 cuts it while it lights).
+## A halo, an orange teardrop and a pale core: nothing is allocated (scratch arrays).
+func draw_flame(ci: CanvasItem, heat: float, t: float, sputter: float = 1.0) -> void:
 	if heat > 0.04:
-		var f := 0.85 + 0.15 * sin(t * 45.0)
-		var flame_len := (6.0 + 24.0 * heat) * f
-		_flame[0] = Vector2(-5, 52)
-		_flame[1] = Vector2(5, 52)
-		_flame[2] = Vector2(0, 52.0 - flame_len)
-		ci.draw_colored_polygon(_flame, Color(1.0, 0.55, 0.1))
-		_flame_in[0] = Vector2(-2.5, 52)
-		_flame_in[1] = Vector2(2.5, 52)
-		_flame_in[2] = Vector2(0, 52.0 - flame_len * 0.55)
-		ci.draw_colored_polygon(_flame_in, Color(1.0, 0.92, 0.35))
+		var f := (0.85 + 0.15 * sin(t * 45.0) + 0.06 * sin(t * 97.0)) * sputter
+		var flame_len := (6.0 + 30.0 * heat) * f
+		var wd := 3.2 + 3.4 * heat
+		ci.draw_circle(Vector2(0, 52.0 - flame_len * 0.45), 8.0 + 14.0 * heat * f, Color(1.0, 0.6, 0.2, 0.16 * heat * f))
+		_f5[0] = Vector2(-wd, 52)
+		_f5[1] = Vector2(wd, 52)
+		_f5[2] = Vector2(wd * 0.75, 52.0 - flame_len * 0.5)
+		_f5[3] = Vector2(sin(t * 31.0) * 1.8, 52.0 - flame_len)
+		_f5[4] = Vector2(-wd * 0.75, 52.0 - flame_len * 0.5)
+		ci.draw_colored_polygon(_f5, Color(1.0, 0.5, 0.1))
+		_f5[0] = Vector2(-wd * 0.5, 52)
+		_f5[1] = Vector2(wd * 0.5, 52)
+		_f5[2] = Vector2(wd * 0.4, 52.0 - flame_len * 0.3)
+		_f5[3] = Vector2(0, 52.0 - flame_len * 0.62)
+		_f5[4] = Vector2(-wd * 0.4, 52.0 - flame_len * 0.3)
+		ci.draw_colored_polygon(_f5, Color(1.0, 0.93, 0.4))
 
 ## The whole balloon: body and flame (the map marker, the shop).
 func draw(ci: CanvasItem, env: int, basket: int, pas: int, heat: float, t: float, w: float) -> void:
