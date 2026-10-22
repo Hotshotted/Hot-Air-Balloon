@@ -65,7 +65,7 @@ var haze_clear_lanes := 1.0
 var haze_per_lane := 0.38
 var haze_max := 0.9
 ## Himalayas: thin air: climbing costs up to 1 / (1 - thin_air_loss) times the propane at the top; the top layer is a jet stream (px/s).
-var thin_air_loss := 0.45
+var thin_air_loss := 0.3
 var jet_wind := 250.0
 
 # ---------- Hazards ----------
