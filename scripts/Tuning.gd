@@ -37,7 +37,7 @@ var edge_wrap := true
 var preview_seconds := 1.5
 ## Balloon size multiplier, and how much of its drawn size counts for collisions (0.85 = forgiving).
 var balloon_scale := 1.8
-var hit_forgiveness := 0.85
+var hit_forgiveness := 0.72
 
 # ---------- Wind layers ----------
 ## Layers in level 1, one more per level, never more than layers_max (the sky is a fixed height).
