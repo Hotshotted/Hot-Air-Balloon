@@ -416,6 +416,7 @@ func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0, rec:
 						already = already or gs_lane[q] == i3
 					if already:
 						continue
+					lane_count[i3] = mini(lane_count[i3], 1)   # a layer that holds a star carries at most one (big) hazard: the star can always be reached
 					gs_lane[gs_count] = i3
 					gs_x[gs_count] = _slot_x(i3)
 					gs_y[gs_count] = _lane_cy(i3)
