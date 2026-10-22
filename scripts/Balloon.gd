@@ -8,7 +8,7 @@ extends Node2D
 const WIDTH := 88.0            # design width (before Tuning.balloon_scale)
 const BASKET_BOTTOM := 84.0    # design distance from the envelope centre (the node origin) to the basket's base
 ## Hit circles in design units: [dy from the origin, radius]. Envelope top, envelope bottom, basket.
-const HIT := [[-4.0, 32.0], [32.0, 19.0], [72.0, 11.0]]
+const HIT := [[-2.0, 26.0], [32.0, 16.0], [72.0, 10.0]]
 const NECK_Y := 48.0           # design y of the envelope's neck: the envelope leans about it
 const BASKET_PIVOT := 52.0     # design y where the basket hangs: it swings about it
 const PRED_N := 12             # points of each drift-preview line

@@ -61,8 +61,8 @@ func _draw() -> void:
 	var pic := Rect2(Vector2(14.0 * u, 14.0 * u), Vector2(s.x - 28.0 * u, s.y - 28.0 * u - 62.0 * u))
 	if state == 0:
 		draw_rect(pic, Color(0.42, 0.44, 0.5))
-		draw_rect(pic, Color.BLACK, false, 4.0 * u)
-		draw_rect(Rect2(Vector2.ZERO, s), Color.BLACK, false, 6.0 * u)
+		draw_rect(pic, Color(0.55, 0.42, 0.25, 0.55), false, 4.0 * u)
+		draw_rect(Rect2(Vector2.ZERO, s), Color(0.55, 0.42, 0.25, 0.55), false, 6.0 * u)
 		return
 	Regions.draw_backdrop(self, region, pic, 4.0 * u)
 	_landmark(pic, u)
@@ -70,7 +70,7 @@ func _draw() -> void:
 	# Stamp, top right.
 	var st := Rect2(Vector2(s.x - 92.0 * u, 22.0 * u), Vector2(60.0 * u, 70.0 * u))
 	draw_rect(st, Color(1, 1, 1))
-	draw_rect(st, Color.BLACK, false, 3.0 * u)
+	draw_rect(st, Color(0.55, 0.42, 0.25, 0.55), false, 3.0 * u)
 	draw_rect(st.grow(-8.0 * u), Regions.SKY_HIGH[region])
 	Ui.draw_star(self, st.get_center(), 14.0 * u, GOLD)
 	if state == 2:   # gold: a thick gold frame, corner stars and a ribbon
@@ -79,11 +79,11 @@ func _draw() -> void:
 			Ui.draw_star(self, c, 22.0 * u, GOLD)
 		var rb := Rect2(Vector2(16.0 * u, 22.0 * u), Vector2(110.0 * u, 34.0 * u))
 		draw_rect(rb, GOLD)
-		draw_rect(rb, Color.BLACK, false, 3.0 * u)
+		draw_rect(rb, Color(0.55, 0.42, 0.25, 0.55), false, 3.0 * u)
 		Ui.draw_star(self, rb.get_center() - Vector2(28.0 * u, 0), 10.0 * u, Color.WHITE)
 		Ui.draw_star(self, rb.get_center(), 10.0 * u, Color.WHITE)
 		Ui.draw_star(self, rb.get_center() + Vector2(28.0 * u, 0), 10.0 * u, Color.WHITE)
-	draw_rect(Rect2(Vector2.ZERO, s), Color.BLACK, false, 5.0 * u)
+	draw_rect(Rect2(Vector2.ZERO, s), Color(0.55, 0.42, 0.25, 0.55), false, 5.0 * u)
 	if stamp_amt > 0.01:
 		_postmark(Vector2(s.x * 0.2, s.y * 0.56), u)
 
@@ -142,17 +142,11 @@ func _poly(points: Array, fill: Color, w: float) -> void:
 	for i in points.size():
 		_pts[i] = points[i]
 	draw_colored_polygon(_pts, fill)
-	_pts.resize(points.size() + 1)
-	_pts[points.size()] = _pts[0]
-	draw_polyline(_pts, Color.BLACK, w)
 
 func _balloon(c: Vector2, u: float) -> void:
-	var w := 3.5 * u
-	_poly([c + Vector2(-26, -4) * u, c + Vector2(-16, -34) * u, c + Vector2(0, -42) * u, c + Vector2(16, -34) * u, c + Vector2(26, -4) * u, c + Vector2(12, 22) * u, c + Vector2(-12, 22) * u], Color(1.0, 0.45, 0.16), w)
-	_poly([c + Vector2(-8, -40) * u, c + Vector2(8, -40) * u, c + Vector2(6, 22) * u, c + Vector2(-6, 22) * u], Color(1.0, 0.94, 0.78), w * 0.7)
-	_poly([c + Vector2(-8, 34) * u, c + Vector2(8, 34) * u, c + Vector2(7, 46) * u, c + Vector2(-7, 46) * u], Color(0.62, 0.4, 0.2), w)
-	draw_line(c + Vector2(-9, 22) * u, c + Vector2(-8, 34) * u, Color.BLACK, w * 0.7)
-	draw_line(c + Vector2(9, 22) * u, c + Vector2(8, 34) * u, Color.BLACK, w * 0.7)
+	draw_set_transform(c + Vector2(0.0, -4.0 * u), 0.0, Vector2(u * 0.55, u * 0.55))
+	BalloonArt.shared().draw_body(self, Save.equipped(0), Save.equipped(1), Save.equipped(2), 4.0)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 ## The landmark of each region, at the bottom of the picture.
 func _landmark(pic: Rect2, u: float) -> void:
@@ -168,26 +162,26 @@ func _landmark(pic: Rect2, u: float) -> void:
 			_poly([Vector2(mx - 16 * u, base - 90 * u), Vector2(mx, base - 108 * u), Vector2(mx + 16 * u, base - 90 * u)], Color(0.7, 0.25, 0.2), w)
 			var hub := Vector2(mx, base - 74 * u)
 			for a in [0.5, 2.07, 3.64, 5.21]:
-				draw_line(hub, hub + Vector2(cos(a), sin(a)) * 46.0 * u, Color.BLACK, 6.0 * u)
+				draw_line(hub, hub + Vector2(cos(a), sin(a)) * 46.0 * u, Color(0.04, 0.06, 0.13, 0.6), 6.0 * u)
 				draw_line(hub, hub + Vector2(cos(a), sin(a)) * 44.0 * u, Color(1, 1, 1), 2.5 * u)
-			draw_circle(hub, 6.0 * u, Color.BLACK)
+			draw_circle(hub, 6.0 * u, Color(0.04, 0.06, 0.13, 0.6))
 		1:   # a chalet and a cable car
 			var hx := x0 + pw * 0.2
 			_poly([Vector2(hx - 34 * u, base), Vector2(hx - 34 * u, base - 36 * u), Vector2(hx + 34 * u, base - 36 * u), Vector2(hx + 34 * u, base)], Color(0.7, 0.45, 0.25), w)
 			_poly([Vector2(hx - 42 * u, base - 36 * u), Vector2(hx, base - 70 * u), Vector2(hx + 42 * u, base - 36 * u)], Color(0.65, 0.2, 0.2), w)
 			var cy0 := pic.position.y + pic.size.y * 0.14
 			var cy1 := pic.position.y + pic.size.y * 0.5
-			draw_line(Vector2(x0, cy0), Vector2(x0 + pw, cy1), Color.BLACK, 4.0 * u)
+			draw_line(Vector2(x0, cy0), Vector2(x0 + pw, cy1), Color(0.04, 0.06, 0.13, 0.6), 4.0 * u)
 			var cx := x0 + pw * 0.72
 			var cy := cy0 + (cy1 - cy0) * 0.72
-			draw_line(Vector2(cx, cy), Vector2(cx, cy + 16 * u), Color.BLACK, 3.0 * u)
+			draw_line(Vector2(cx, cy), Vector2(cx, cy + 16 * u), Color(0.04, 0.06, 0.13, 0.6), 3.0 * u)
 			_poly([Vector2(cx - 22 * u, cy + 16 * u), Vector2(cx + 22 * u, cy + 16 * u), Vector2(cx + 22 * u, cy + 44 * u), Vector2(cx - 22 * u, cy + 44 * u)], Color(0.9, 0.25, 0.25), w)
 		2:   # pyramids and a palm
 			draw_circle(Vector2(x0 + pw * 0.84, pic.position.y + pic.size.y * 0.24), 30.0 * u, Color(1.0, 0.86, 0.3))
 			_poly([Vector2(x0 + pw * 0.14, base), Vector2(x0 + pw * 0.3, base - 90 * u), Vector2(x0 + pw * 0.46, base)], Color(0.92, 0.76, 0.4), w)
 			_poly([Vector2(x0 + pw * 0.34, base), Vector2(x0 + pw * 0.5, base - 62 * u), Vector2(x0 + pw * 0.64, base)], Color(0.85, 0.68, 0.34), w)
 			var px := x0 + pw * 0.8
-			draw_line(Vector2(px, base), Vector2(px + 6 * u, base - 70 * u), Color.BLACK, 8.0 * u)
+			draw_line(Vector2(px, base), Vector2(px + 6 * u, base - 70 * u), Color(0.04, 0.06, 0.13, 0.6), 8.0 * u)
 			for a in [-2.6, -2.0, -1.2, -0.55]:
 				draw_line(Vector2(px + 6 * u, base - 70 * u), Vector2(px + 6 * u, base - 70 * u) + Vector2(cos(a), sin(a)) * 34.0 * u, Color(0.2, 0.55, 0.25), 7.0 * u)
 		3:   # a temple, prayer flags and a moon
@@ -197,7 +191,7 @@ func _landmark(pic: Rect2, u: float) -> void:
 			_poly([Vector2(tx - 30 * u, base - 28 * u), Vector2(tx - 30 * u, base - 52 * u), Vector2(tx + 30 * u, base - 52 * u), Vector2(tx + 30 * u, base - 28 * u)], Color(0.85, 0.2, 0.2), w)
 			_poly([Vector2(tx - 40 * u, base - 52 * u), Vector2(tx, base - 78 * u), Vector2(tx + 40 * u, base - 52 * u)], Color(0.95, 0.75, 0.2), w)
 			var fy := pic.position.y + pic.size.y * 0.5
-			draw_line(Vector2(x0 + pw * 0.04, fy), Vector2(x0 + pw * 0.5, fy + 20 * u), Color.BLACK, 3.0 * u)
+			draw_line(Vector2(x0 + pw * 0.04, fy), Vector2(x0 + pw * 0.5, fy + 20 * u), Color(0.04, 0.06, 0.13, 0.6), 3.0 * u)
 			var cols := [Color(0.9, 0.2, 0.2), Color(0.95, 0.85, 0.2), Color(0.2, 0.6, 0.9), Color(0.3, 0.8, 0.4)]
 			for i in 4:
 				var fx := x0 + pw * (0.1 + 0.1 * float(i))

@@ -8,13 +8,14 @@ extends RefCounted
 const BLACK := Color(0, 0, 0, 1)
 
 var outline_w := 4.5
+var k := 1.0           # every position is multiplied by this (a design drawn at one size, built at another)
 var verts := PackedVector2Array()
 var cols := PackedColorArray()
 var uvs := PackedVector2Array()
 var idx := PackedInt32Array()
 
 func _add_vertex(p: Vector2, c: Color, anim: float, weight: float) -> int:
-	verts.append(p)
+	verts.append(p * k)
 	cols.append(c)
 	uvs.append(Vector2(anim, weight))
 	return verts.size() - 1
@@ -65,6 +66,12 @@ func line(a: Vector2, b: Vector2, w: float, col: Color, anim: float = 0.0, weigh
 ## An axis-aligned rectangle (filled, outlined).
 func rect(x: float, y: float, w: float, h: float, fill: Color, line: bool = true, anim: float = 0.0, weight: float = 0.0) -> void:
 	poly([Vector2(x, y), Vector2(x + w, y), Vector2(x + w, y + h), Vector2(x, y + h)], fill, line, anim, weight)
+
+## Every sub-path of an SVG path string as a flat filled polygon (SvgArt), `off` added and the sum multiplied by `sc`.
+func fill_path(d: String, fill: Color, off: Vector2 = Vector2.ZERO, sc: float = 1.0, anim: float = 0.0, weight: float = 0.0) -> void:
+	for p in SvgArt.path(d, off, sc):
+		if p.size() >= 3:
+			poly(Array(p), fill, false, anim, weight)
 
 func build() -> ArrayMesh:
 	var arrays := []

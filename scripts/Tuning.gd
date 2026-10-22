@@ -75,7 +75,7 @@ var hazard_density := 2.2
 var density_per_level := 0.25
 var density_max := 3.2
 ## The smallest gap between two hazards in a layer, in balloon widths. Below ~1.4 it is not passable.
-var min_gap_factor := 1.8
+var min_gap_factor := 2.4
 ## Hazard size multiplier.
 var hazard_scale := 1.0
 

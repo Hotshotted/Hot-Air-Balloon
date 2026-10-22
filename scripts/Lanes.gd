@@ -40,8 +40,8 @@ enum { BIRD, KITE, BALLOON, DRONE, EAGLE, CABLE, CARPET, GLIDER, GOOSE }
 const KIND_NAME := ["a bird", "a kite", "another balloon", "a drone", "an eagle", "a cable car", "a flying carpet", "a paraglider", "a flock of geese"]
 ## Hit ellipse half sizes, speed relative to the wind of the layer, how much of the free layer height the
 ## hazard bobs through, and bob rate.
-const KIND_HX := [34.0, 30.0, 48.0, 50.0, 46.0, 36.0, 52.0, 56.0, 52.0]
-const KIND_HY := [22.0, 44.0, 60.0, 20.0, 28.0, 34.0, 16.0, 38.0, 44.0]
+const KIND_HX := [62.0, 44.0, 54.0, 100.0, 100.0, 56.0, 100.0, 100.0, 75.0]
+const KIND_HY := [42.0, 58.0, 70.0, 36.0, 36.0, 46.0, 32.0, 68.0, 58.0]
 const KIND_SPEED := [1.55, 0.75, 0.45, 2.1, 1.8, 0.6, 1.3, 0.9, 1.25]
 const KIND_BOB := [0.35, 1.0, 0.5, 0.6, 0.3, 0.0, 0.8, 0.7, 0.5]
 const KIND_RATE := [2.2, 1.5, 0.8, 2.6, 2.0, 1.0, 1.8, 1.0, 1.1]
@@ -144,7 +144,6 @@ var render: LaneRender
 var _t := 0.0
 
 # ---- Pre-built shapes: [polygon, closed outline] ----
-var _scn: Array = []                      # per region: a list of [polygon, closed outline, fill colour]
 
 func _ready() -> void:
 	rng.randomize()
@@ -193,7 +192,6 @@ func _ready() -> void:
 	rg_life.resize(RING_MAX)
 	rg_max.resize(RING_MAX)
 	rg_col.resize(RING_MAX)
-	_build_scenery()
 	render = LaneRender.new()
 	render.lanes = self
 	add_child(render)
@@ -205,22 +203,6 @@ static func _pair(pts: Array) -> Array:
 	closed.append(poly[0])
 	return [poly, closed]
 
-# Scenery per region: peaks (with snow caps), trees, dunes, a sun, ground and a launch pad.
-func _build_scenery() -> void:
-	for r in Regions.COUNT:
-		var list: Array = []
-		var gy := GROUND_Y
-		if r == 0 or r == 1:
-			for tx in [90.0, 210.0, 830.0, 990.0]:
-				_scn_add(list, [Vector2(tx - 26, gy - 10), Vector2(tx, gy - 84), Vector2(tx + 26, gy - 10)], Color(0.16, 0.5, 0.26) if r == 0 else Color(0.14, 0.38, 0.3))
-		if r == 2:
-			for cx in [160.0, 760.0]:   # cacti: a box with an arm
-				_scn_add(list, [Vector2(cx - 9, gy), Vector2(cx - 9, gy - 78), Vector2(cx + 9, gy - 78), Vector2(cx + 9, gy)], Color(0.3, 0.55, 0.3))
-				_scn_add(list, [Vector2(cx + 9, gy - 40), Vector2(cx + 30, gy - 40), Vector2(cx + 30, gy - 62), Vector2(cx + 20, gy - 62), Vector2(cx + 20, gy - 50), Vector2(cx + 9, gy - 50)], Color(0.3, 0.55, 0.3))
-		_scn_add(list, [Vector2(-60, gy), Vector2(1140, gy), Vector2(1140, 1960), Vector2(-60, 1960)], Regions.GROUND[r])
-		_scn_add(list, [Vector2(430, gy), Vector2(650, gy), Vector2(650, gy + 22), Vector2(430, gy + 22)], Color(0.55, 0.57, 0.62))
-		_scn.append(list)
-
 ## The time-of-day wash for this leg: rgb = the colour, a = the strength at the horizon (0 at midday). Baked into the colours the
 ## backdrop, the ridges and the scenery are drawn with (they are drawn once per leg), so it costs nothing per frame.
 func day_tint() -> Color:
@@ -229,15 +211,11 @@ func day_tint() -> Color:
 		return Color(1.0, 0.62, 0.42, lerpf(0.26, 0.0, daylight * 2.0) * k)
 	return Color(0.62, 0.36, 0.74, lerpf(0.0, 0.26, (daylight - 0.5) * 2.0) * k)
 
-## `c` washed by the day tint at height y (stronger toward the horizon, like the old overlay gradient).
+## `c` washed by the day tint at height y (stronger toward the horizon).
 func tinted(c: Color, y: float) -> Color:
 	var t := day_tint()
 	var a := t.a * lerpf(0.45, 1.0, clampf(y / H, 0.0, 1.0))
 	return Color(lerpf(c.r, t.r, a), lerpf(c.g, t.g, a), lerpf(c.b, t.b, a), c.a)
-
-func _scn_add(list: Array, pts: Array, fill: Color) -> void:
-	var p := _pair(pts)
-	list.append([p[0], p[1], fill])
 
 static func _octagon(c: Vector2, rx: float, ry: float) -> Array:
 	var pts: Array = []
@@ -728,7 +706,7 @@ func collect(balloon: Balloon) -> int:
 			continue
 		for c in 3:
 			var p := balloon.hit_pos(c)
-			if p.distance_to(Vector2(pk_x[i], pk_y[i])) < balloon.hit_radius(c) + 30.0:
+			if p.distance_to(Vector2(pk_x[i], pk_y[i])) < balloon.hit_radius(c) + 46.0:
 				pk_on[i] = 0
 				got += 1
 				burst(Vector2(pk_x[i], pk_y[i]), C_TANK, 14, 320.0)
@@ -743,7 +721,7 @@ func collect_coins(balloon: Balloon) -> int:
 		if cn_on[i] == 0:
 			continue
 		for c in 3:
-			if balloon.hit_pos(c).distance_to(Vector2(cn_x[i], cn_y[i])) < balloon.hit_radius(c) + 30.0:
+			if balloon.hit_pos(c).distance_to(Vector2(cn_x[i], cn_y[i])) < balloon.hit_radius(c) + 46.0:
 				cn_on[i] = 0
 				got += 1
 				burst(Vector2(cn_x[i], cn_y[i]), Color(1.0, 0.85, 0.2), 12, 300.0)
@@ -788,7 +766,7 @@ func collect_stars(balloon: Balloon) -> int:
 		if gs_on[q] == 0:
 			continue
 		for c in 3:
-			if balloon.hit_pos(c).distance_to(Vector2(gs_x[q], gs_y[q])) < balloon.hit_radius(c) + 32.0:
+			if balloon.hit_pos(c).distance_to(Vector2(gs_x[q], gs_y[q])) < balloon.hit_radius(c) + 48.0:
 				gs_on[q] = 0
 				got += 1
 				burst(Vector2(gs_x[q], gs_y[q]), Color(0.6, 0.95, 1.0), 14, 320.0)

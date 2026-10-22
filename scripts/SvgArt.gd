@@ -5,7 +5,7 @@ extends RefCounted
 
 static var _cache := {}
 
-## Parse `d` into one polygon per sub-path; `off` is added to every point, `sc` multiplies it first.
+## Parse `d` into one polygon per sub-path; `off` is added to every point and the sum is multiplied by `sc`.
 static func path(d: String, off: Vector2 = Vector2.ZERO, sc: float = 1.0) -> Array:
 	var key := "%s|%s|%s" % [d, off, sc]
 	if _cache.has(key):
@@ -76,7 +76,7 @@ static func path(d: String, off: Vector2 = Vector2.ZERO, sc: float = 1.0) -> Arr
 	return out
 
 static func _tx(p: Vector2, off: Vector2, sc: float) -> Vector2:
-	return p * sc + off
+	return (p + off) * sc
 
 static func _cubic(a: Vector2, b: Vector2, c: Vector2, d: Vector2, t: float) -> Vector2:
 	var u := 1.0 - t
@@ -121,7 +121,8 @@ static func stroke(ci: CanvasItem, d: String, col: Color, w: float, off: Vector2
 			ci.draw_polyline(poly, col, w, true)
 
 ## A rounded rectangle as a polygon.
-static func rrect(x: float, y: float, w: float, h: float, r: float, off: Vector2 = Vector2.ZERO) -> PackedVector2Array:
+static func rrect(x: float, y: float, w: float, h: float, r: float, off: Vector2 = Vector2.ZERO, sc: float = 1.0) -> PackedVector2Array:
+	r = minf(r, minf(w, h) * 0.5)
 	var pts := PackedVector2Array()
 	for corner in 4:
 		var cx: float = x + (w - r if corner == 0 or corner == 1 else r)
@@ -129,7 +130,7 @@ static func rrect(x: float, y: float, w: float, h: float, r: float, off: Vector2
 		var a0: float = [-PI * 0.5, 0.0, PI * 0.5, PI][corner]
 		for k in 5:
 			var a: float = a0 + PI * 0.5 * float(k) / 4.0
-			pts.append(Vector2(cx + cos(a) * r, cy + sin(a) * r) + off)
+			pts.append((Vector2(cx + cos(a) * r, cy + sin(a) * r) + off) * sc)
 	return pts
 
 ## An ellipse as a polygon.

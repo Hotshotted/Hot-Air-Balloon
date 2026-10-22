@@ -93,8 +93,6 @@ func draw_layer(ci: CanvasItem, layer: int) -> void:
 	poly.append(Vector2(Lanes.W * 2.0, gy + 2.0))
 	poly.append(Vector2(0.0, gy + 2.0))
 	ci.draw_colored_polygon(poly, lanes.tinted(base, gy - hmax * 0.5))
-	var edge := Color(0, 0, 0, [0.3, 0.5, 1.0][layer])
-	ci.draw_polyline(line, edge, [3.0, 3.5, 4.0][layer])
 	# per-region details
 	if r == 1 or r == 3:   # snow caps on the peaks of the far and middle layers
 		if layer < 2 or r == 3:

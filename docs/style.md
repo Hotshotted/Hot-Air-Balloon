@@ -116,3 +116,31 @@ otherwise.
 - **Feedback**: pickups, handoffs and landings burst squares *and* an expanding outlined ring; the passenger cheers; a crash
   empties the envelope (squash, flutter), drops the basket and droops the passenger instead of vanishing.
 - **Readouts on light surfaces** (the world map's parchment) sit on dark pills; white or gold text is never set straight on parchment.
+
+## Storybook Sky (the art direction)
+
+Approved on the design canvas "Storybook Sky": a side-view picture book. **No flat bands separated by black lines, no black
+outlines on the art**: depth comes from flat colour, a shaded side, a highlight and soft shapes. The UI keeps the ink outline on
+text and the chunky ink border and lip on buttons and tool tiles.
+
+- **Balloon** (`BalloonArt`, ported from the canvas symbol with `SvgArt`): a large envelope with a white centre gore, a shaded left
+  side and a highlight; a woven basket on brown ropes; a burner at the neck. Heat is readable from the balloon itself: cold is dull,
+  greyed and slightly slack; warm gets its colour back; hot is bright, full and haloed (`balloon_env.gdshader`, the halo sprite) with a
+  flame that grows with the burner. Faster or reversed wind leans the envelope and swings the basket with lag; two streamers show
+  the wind at the exact altitude. All cosmetics are drawn in this style (cat head "Whiskers", "Hot Dog", "Big Fish").
+- **Sky**: every wind layer is a slightly different tone, lighter toward the ground; soft wavy white cloud seams separate them; white
+  ribbons with arrowheads drift at exactly the layer's wind (more and longer ribbons = faster); a small navy pill at the left edge
+  repeats it (chevrons by speed, "calm", or "<> n" counting down to a reversal).
+- **Goal line**: colourful bunting strung across the top. **Ground**: layered rolling hills and a sandy launch pad.
+- **Hazards** are two to three times larger and saturated: geese in a V, eagles, kites with bowed tails, drones with a red light,
+  cable-car gondolas on a cable, other balloons. Pickups: green propane tank, gold star, coin. (Spacing, not size, was adjusted
+  to keep every leg fair: `min_gap_factor` 2.4 and smaller balloon hit circles than the art.)
+- **HUD**: only four things: pause (top left), leg pips (top centre: done green, current gold, future faded), coins (top right), and
+  the propane tank gauge with its gold tick (bottom left); tool tiles bottom right (sandbag tan, anchor slate, vent red, charge
+  badge). The leg goal shows once at leg start and fades; the star goals live on the leg-complete screen.
+- **Screens**: sunset title; parchment map with a hillside, dotted route, numbered tiles and the other regions as cards; "LEG N
+  LANDED" with the propane card and star goals; shop, album and postcards in the same flat style.
+- **Regions**: Countryside morning, Alps clear blue with snowy peaks, Sahara warm noon with dunes, Himalayas dusk with stars; three
+  parallax ridge layers and a time-of-day wash (dawn to dusk across a Flight's legs) baked into the colours.
+- **Audio** (as in Pattern-Control): short, soft and rounded, procedural; buses come from `default_bus_layout.tres`; audio unlocks on
+  the first tap and is suspended when the page is hidden, closed or loses focus (`web/shell.html`).

@@ -6,6 +6,30 @@ extends CanvasLayer
 
 ## The in-game loading cover (the pre-warm): an opaque brand background, the studio mark spinning, the wordmark and a bar.
 ## Nothing else: no text, so nothing of the game behind it can show through.
+## The leg pips: done green, current gold with a white ring, future faded, on a navy pill.
+class _Pips extends Control:
+	var legs := 5
+	var done := 0
+	func _draw() -> void:
+		draw_colored_polygon(SvgArt.rrect(0.0, 0.0, size.x, size.y, size.y * 0.5), Color(0.078, 0.129, 0.239, 0.82))
+		var gap := 50.0
+		var total := float(legs - 1) * gap + 16.0
+		var x := (size.x - total) * 0.5 + 8.0
+		for i in legs:
+			var c := Vector2(x + float(i) * gap, size.y * 0.5)
+			if i < done:
+				draw_circle(c, 17.0, Style.SUCCESS)
+			elif i == done:
+				draw_circle(c, 23.0, Color.WHITE)
+				draw_circle(c, 18.0, Style.ACCENT)
+			else:
+				draw_circle(c, 17.0, Color(1, 1, 1, 0.3))
+
+## A navy pill (coins readout).
+class _PillBox extends Control:
+	func _draw() -> void:
+		draw_colored_polygon(SvgArt.rrect(0.0, 0.0, size.x, size.y, size.y * 0.5), Color(0.078, 0.129, 0.239, 0.82))
+
 class SplashDraw extends Control:
 	var t := 0.0
 
@@ -97,6 +121,7 @@ class IntroDraw extends Control:
 			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 signal pause_pressed
+signal next_leg_pressed
 signal resume_pressed
 signal restart_pressed
 signal quit_pressed
@@ -128,6 +153,12 @@ var stamp_label: Label
 var banner: Label
 var splash: Control               # the loading cover: the studio mark, a bar, no text (its own CanvasLayer, above everything)
 var gauge: Control
+var pips: Control
+var coin_pill: Control
+var coin_value: Label
+var tool_badges: Array[Label] = []
+var _goal_left := 0.0
+var star_rows: Array = []          # the Flight's star goals so far (for the leg-complete screen): [text, progress text, lit]
 var air_label: Label
 var goal_label: Label
 var hint_label: Label
@@ -160,6 +191,7 @@ var _g_sheen: StyleBoxFlat
 var _hint_left := 0.0
 var _goal_cache := ""
 var map: MapScreen
+var legdone: LegDoneScreen
 var album: AlbumScreen
 var shop: ShopScreen
 var boost_btn: Button
@@ -226,7 +258,8 @@ var _frames_win := 0
 var _prof_text := ""
 ## Where the three tool buttons are (below the ground line). Touches are handled by Main (so a second finger works
 ## while the first holds the burner); the buttons themselves are only drawn.
-static var TOOL_RECTS := [Rect2(30, 1742, 320, 110), Rect2(380, 1742, 320, 110), Rect2(730, 1742, 320, 110)]
+static var TOOL_RECTS := [Rect2(554, 1722, 150, 150), Rect2(722, 1722, 150, 150), Rect2(890, 1722, 150, 150)]
+const TOOL_FILL := [Color("c4844a"), Color("5a6a8a"), Color("ff5c4d")]   # sandbag tan, anchor slate, vent red
 const TOOL_NAMES := ["SANDBAG", "ANCHOR", "QUICK VENT"]
 const GRAPH_N := 120
 const GRAPH_MAX_MS := 50.0
@@ -244,52 +277,88 @@ func _ready() -> void:
 	stamp_label.text = "%s  %s%s" % [BuildInfo.COMMIT, BuildInfo.TIME, ("  " + flags) if flags != "" else ""]
 	for l in [level_label, score_label, coins_label, stamp_label]:
 		add_child(l)
-	_g_track = Style.box(Color(Style.INK, 0.85), Color(1, 1, 1, 0.3), 17, 3, false)
+	for l in [level_label, score_label, coins_label]:
+		l.visible = false   # (kept as data holders; the new HUD shows only four things)
+	_g_track = Style.box(Color(1, 1, 1, 0.15), Color(0, 0, 0, 0), 24, 0, false)
 	for k in ["ok", "mid", "low_a", "low_b"]:
 		var col: Color = {"ok": Style.SUCCESS, "mid": Style.WARNING, "low_a": Style.DANGER, "low_b": Style.WARNING}[k]
-		_g_fill[k] = Style.box(col, col.lightened(0.25), 14, 2, false)
+		_g_fill[k] = Style.box(col, Color(0, 0, 0, 0), 22, 0, false)
 	_g_sheen = Style.sheen(6, 0.3)
-	propane_icon = Ui.icon("propane", 44, Vector2(28, 109))
-	add_child(propane_icon)
+	# the four things: pause (top left), leg pips (top centre), coins (top right), the propane tank (bottom left)
+	pips = _Pips.new()
+	pips.position = Vector2(390, 60)
+	pips.size = Vector2(300, 100)
+	pips.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(pips)
+	coin_pill = _PillBox.new()
+	coin_pill.position = Vector2(Lanes.W - 44.0 - 250.0, 56.0)
+	coin_pill.size = Vector2(250, 108)
+	coin_pill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(coin_pill)
+	coin_pill.add_child(Ui.icon("coin", 74, Vector2(16, 17)))
+	coin_value = Ui.label("0", 56, HORIZONTAL_ALIGNMENT_LEFT, Vector2(100, 14), Vector2(140, 80))
+	coin_value.add_theme_constant_override("outline_size", 0)
+	coin_pill.add_child(coin_value)
 	gauge = Control.new()
-	gauge.position = Vector2(84, 114)
-	gauge.size = Vector2(966, 34)
+	gauge.position = Vector2(44, 1742)
+	gauge.size = Vector2(490, 130)
 	gauge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	gauge.draw.connect(_draw_gauge)
 	add_child(gauge)
-	prog = Control.new()
-	prog.position = Vector2(30, 154)
-	prog.size = Vector2(1020, 50)
-	prog.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	prog.draw.connect(_draw_prog)
+	propane_icon = Ui.icon("propane", 78, Vector2(24, 26))
+	gauge.add_child(propane_icon)
+	prog = Control.new()   # (the old star-progress row: kept hidden; the Flight's star goals live on the leg-complete screen)
+	prog.visible = false
 	add_child(prog)
 	for i in 3:
-		var pi := Ui.icon(["legs", "propane", "coin"][i], 32, Vector2(46.0 + 345.0 * float(i), 9))
+		var pi := Ui.icon(["legs", "propane", "coin"][i], 32, Vector2.ZERO)
 		prog.add_child(pi)
 		prog_icons.append(pi)
-		var l := Ui.label("", 28, HORIZONTAL_ALIGNMENT_LEFT, Vector2(86.0 + 345.0 * float(i), 6), Vector2(255, 40))
+		var l := Ui.label("", 28, HORIZONTAL_ALIGNMENT_LEFT, Vector2.ZERO, Vector2(255, 40))
 		prog.add_child(l)
 		prog_labels.append(l)
-	air_label = Ui.label("", 24, HORIZONTAL_ALIGNMENT_RIGHT, Vector2(560, 202), Vector2(490, 34))
-	air_label.add_theme_color_override("font_color", Color(0.75, 0.85, 1.0))
+	air_label = Ui.label("", 34, HORIZONTAL_ALIGNMENT_CENTER, Vector2(140, 330), Vector2(800, 50))
+	air_label.add_theme_color_override("font_color", Color(0.85, 0.92, 1.0))
 	air_label.visible = false
 	add_child(air_label)
 	goal_icon = Ui.icon("goal_climb", 30, Vector2(30, 203))
+	goal_icon.visible = false
 	add_child(goal_icon)
-	goal_label = Ui.label("", 24, HORIZONTAL_ALIGNMENT_LEFT, Vector2(70, 202), Vector2(680, 34))
-	goal_label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.6))
+	goal_label = Ui.label("", 60, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 176), Vector2(1000, 84))
+	goal_label.add_theme_constant_override("outline_size", 14)
+	goal_label.modulate.a = 0.0
 	add_child(goal_label)
 	hint_label = Ui.label("", 40, HORIZONTAL_ALIGNMENT_CENTER, Vector2(60, 1010), Vector2(960, 220))
 	hint_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	hint_label.visible = false
 	add_child(hint_label)
-	for i in 3:
-		var tb := Ui.button(TOOL_NAMES[i], 28, TOOL_RECTS[i].position, TOOL_RECTS[i].size, Ui.COL_BTN, ["sandbag", "anchor", "vent"][i])
+	for i in 3:   # the tools: chunky tiles with a charge badge
+		var tb := Button.new()
+		tb.position = TOOL_RECTS[i].position
+		tb.size = TOOL_RECTS[i].size
+		tb.focus_mode = Control.FOCUS_NONE
 		tb.mouse_filter = Control.MOUSE_FILTER_IGNORE   # (drawn only: Main handles the touches)
+		var fill: Color = TOOL_FILL[i]
+		for st in ["normal", "hover", "pressed", "focus"]:
+			tb.add_theme_stylebox_override(st, _tile_box(fill))
+		tb.add_theme_stylebox_override("disabled", _tile_box(fill.lerp(Color(0.35, 0.38, 0.45), 0.7)))
+		Ui.add_icon(tb, ["sandbag", "anchor", "vent"][i], 84.0)
+		Ui.hook_press(tb, "")
+		var badge := Panel.new()
+		badge.position = Vector2(tb.size.x - 46.0, -24.0)
+		badge.size = Vector2(66, 66)
+		badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		badge.add_theme_stylebox_override("panel", Style.box(Color.WHITE, Style.INK, 33, 6, false))
+		tb.add_child(badge)
+		var bl := Ui.label("2", 40, HORIZONTAL_ALIGNMENT_CENTER, Vector2(0, 2), Vector2(66, 60))
+		bl.add_theme_color_override("font_color", Style.TEXT_ON_LIGHT)
+		bl.add_theme_constant_override("outline_size", 0)
+		badge.add_child(bl)
+		tool_badges.append(bl)
 		tb.visible = false
 		add_child(tb)
 		tool_btns.append(tb)
-	pause_btn = Ui.ghost_button("pause", Vector2(Lanes.W - 30.0 - 92.0, 12), 92.0)
+	pause_btn = Ui.ghost_button("pause", Vector2(44.0, 44.0), 132.0)
 	pause_btn.visible = false
 	pause_btn.pressed.connect(func(): pause_pressed.emit())
 	add_child(pause_btn)
@@ -304,6 +373,8 @@ func _ready() -> void:
 	title.visible = false
 	add_child(title)
 	title.play_pressed.connect(func(): title_play_pressed.emit())
+	title.daily_pressed.connect(func(): daily_pressed.emit())
+	title.shop_pressed.connect(func(): shop_pressed.emit())
 	map = MapScreen.new()
 	add_child(map)
 	map.home_pressed.connect(func(): home_pressed.emit())
@@ -311,6 +382,11 @@ func _ready() -> void:
 	map.album_pressed.connect(func(): album_pressed.emit())
 	map.shop_pressed.connect(func(): shop_pressed.emit())
 	map.daily_pressed.connect(func(): daily_pressed.emit())
+	legdone = LegDoneScreen.new()
+	legdone.visible = false
+	add_child(legdone)
+	legdone.next_pressed.connect(func(): next_leg_pressed.emit())
+	legdone.boost_pressed.connect(func(): boost_pressed.emit())
 	album = AlbumScreen.new()
 	add_child(album)
 	album.back_pressed.connect(func(): album_closed.emit())
@@ -393,6 +469,17 @@ func _panel() -> Control:
 	p.add_child(bg)
 	add_child(p)
 	return p
+
+## A chunky tool tile: a flat colour, an ink border and a thick lip underneath.
+func _tile_box(fill: Color) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = fill
+	sb.border_color = Style.INK
+	sb.set_border_width_all(8)
+	sb.border_width_bottom = 20
+	sb.set_corner_radius_all(48)
+	sb.anti_aliasing = true
+	return sb
 
 func _build_menu() -> void:
 	menu_p = _panel()
@@ -501,6 +588,12 @@ func hide_pause() -> void:
 	pause_p.visible = false
 
 ## The leg-to-leg propane carry-over: a tank gauge that fills to what the next leg starts with.
+## The leg-complete screen (see LegDoneScreen).
+func show_leg_done(region_name: String, flight_no: int, leg_done: int, legs: int, carry: float, can_boost: bool) -> void:
+	legdone.show_leg(region_name, flight_no, leg_done, legs, carry, star_rows, can_boost)
+	legdone.visible = true
+	_enter(legdone)
+
 func show_carry(frac: float) -> void:
 	carry_frac = clampf(frac, 0.0, 1.0)
 	carry_shown = 0.0
@@ -702,20 +795,23 @@ func _draw_rows(ci: Control, lit: Array, r: float, gap: float) -> void:
 			_shake = 0.3
 
 func _draw_gauge() -> void:
-	var w := gauge.size.x
-	gauge.draw_style_box(_g_track, Rect2(0, 0, w, 34))
+	var sz := gauge.size
+	gauge.draw_colored_polygon(SvgArt.rrect(0.0, 0.0, sz.x, sz.y, 56.0), Color(0.078, 0.129, 0.239, 0.9))
+	var bx := 130.0
+	var bw := sz.x - bx - 36.0
+	var by := (sz.y - 46.0) * 0.5
+	gauge.draw_style_box(_g_track, Rect2(bx, by, bw, 46))
 	var key := "ok"
 	if fuel_frac < 0.5:
 		key = "mid"
 	if fuel_low:
 		key = "low_a" if int(_clock * 6.0) % 2 == 0 else "low_b"
-	var fw := (w - 6.0) * clampf(fuel_frac, 0.0, 1.0)
-	if fw > 10.0:
-		gauge.draw_style_box(_g_fill[key], Rect2(3, 3, fw, 28))
-		gauge.draw_style_box(_g_sheen, Rect2(8, 5, maxf(fw - 10.0, 0.0), 11))
-	var tx := 3.0 + (w - 6.0) * Tuning.star_propane_frac   # the second star's propane target
-	gauge.draw_line(Vector2(tx, -3), Vector2(tx, 37), Style.INK, 8.0)
-	gauge.draw_line(Vector2(tx, -3), Vector2(tx, 37), Style.ACCENT, 4.0)
+	var fw := bw * clampf(fuel_frac, 0.0, 1.0)
+	if fw > 12.0:
+		gauge.draw_style_box(_g_fill[key], Rect2(bx, by, fw, 46))
+		gauge.draw_style_box(_g_sheen, Rect2(bx + 6.0, by + 5.0, maxf(fw - 12.0, 0.0), 12))
+	var tx := bx + bw * Tuning.star_propane_frac   # the second star's propane target: the gold tick
+	gauge.draw_colored_polygon(SvgArt.rrect(tx - 4.0, by - 12.0, 8.0, 70.0, 4.0), Style.ACCENT)
 
 func _draw_prog() -> void:
 	for i in 3:
@@ -725,8 +821,9 @@ func _draw_prog() -> void:
 
 ## Show or hide the in-flight readouts (flight name, score, gauge, star progress): only while flying.
 func set_flight_hud(on: bool) -> void:
-	for n in [level_label, score_label, coins_label, gauge, prog, goal_label, goal_icon, propane_icon, pause_btn]:
+	for n in [coin_pill, pips, gauge, pause_btn]:
 		n.visible = on
+	goal_label.visible = on
 	if not on:
 		air_label.visible = false
 		hint_label.visible = false
@@ -744,6 +841,7 @@ func set_score(v: int) -> void:
 
 func set_flight_coins(v: int) -> void:
 	coins_label.text = "+%s coins" % Tuning.fmt(float(v)) if v > 0 else ""
+	coin_value.text = Tuning.fmt(float(v))
 
 func set_fuel(frac: float) -> void:
 	var low := frac < Tuning.propane_low_fraction
@@ -766,6 +864,15 @@ func set_progress(legs_done: int, legs: int, fuel: float, coins: int, coin_targe
 		prog_labels[0].text = t0
 		prog_labels[1].text = t1
 		prog_labels[2].text = t2
+	var pips_s: _Pips = pips
+	if pips_s.legs != legs or pips_s.done != legs_done:
+		pips_s.legs = legs
+		pips_s.done = legs_done
+		pips.queue_redraw()
+	star_rows = [
+		["Finish all %d legs" % legs, "%d / %d" % [legs_done, legs], legs_done >= legs],
+		["Land with %d%% propane" % roundi(Tuning.star_propane_frac * 100.0), "on track" if fuel >= Flights.propane_target() else "%d / %d" % [int(fuel), int(Flights.propane_target())], lit1],
+		["Collect %d coins" % coin_target, "%d / %d" % [coins, coin_target], lit2]]
 	if lit1 != prog_lit[1] or lit2 != prog_lit[2] or prog_lit[0]:
 		prog_lit[0] = false
 		prog_lit[1] = lit1
@@ -776,19 +883,28 @@ func set_progress(legs_done: int, legs: int, fuel: float, coins: int, coin_targe
 func set_goal_icon(goal: int) -> void:
 	goal_icon.set_icon(["goal_climb", "goal_stars", "goal_mail", "goal_storm", "goal_land"][clampi(goal, 0, 4)])
 
+## A new leg: the goal line may be shown again.
+func reset_goal() -> void:
+	_goal_cache = ""
+	_goal_left = 0.0
+	goal_label.modulate.a = 0.0
+
 func set_goal_text(text: String) -> void:
-	if text != _goal_cache:
+	if text != _goal_cache:   # shown once, big, then it fades away
 		_goal_cache = text
 		goal_label.text = text
+		_goal_left = 3.6
+		goal_label.modulate.a = 1.0
 
 ## A tool button: whether it is offered, how many charges are left.
 func set_tool(i: int, available: bool, charges: int) -> void:
 	var tb := tool_btns[i]
 	tb.visible = available
 	tb.disabled = charges <= 0
-	var t := "%s  x%d" % [TOOL_NAMES[i], charges]
-	if tb.text != t:
-		tb.text = t
+	var t := str(charges)
+	if tool_badges[i].text != t:
+		tool_badges[i].text = t
+	tb.text = ""
 
 ## A one-line intro (a new tool): shown for `secs` seconds.
 func show_hint(text: String, secs: float) -> void:
@@ -803,6 +919,9 @@ func show_banner(text: String, secs: float) -> void:
 
 func tick(dt: float) -> void:
 	_clock += dt
+	if _goal_left > 0.0:
+		_goal_left -= dt
+		goal_label.modulate.a = clampf(_goal_left / 0.8, 0.0, 1.0)
 	if _hint_left > 0.0:
 		_hint_left -= dt
 		if _hint_left <= 0.0:
@@ -822,6 +941,7 @@ func hide_overlays() -> void:
 	pause_p.visible = false
 	carry.visible = false
 	map.visible = false
+	legdone.visible = false
 	album.visible = false
 	shop.visible = false
 	card_p.visible = false

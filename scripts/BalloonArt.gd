@@ -89,7 +89,7 @@ func draw_envelope(ci: CanvasItem, env: int, _w: float) -> void:
 			SvgArt.fill(ci, "M80 50L98 30L98 74Z", c1, O)
 			ci.draw_colored_polygon(SvgArt.ellipse(Vector2(46, 52) + O, 42.0, 34.0, 0.0, 28), c1)
 			SvgArt.fill(ci, "M38 86L62 86L62 98L38 98Z", c1, O)
-			SvgArt.fill(ci, "M46 18C20 20 4 36 4 52C4 66 16 80 36 86L38 98C24 90 4 76 4 52Z", Color(INK, 0.12), O)
+			ci.draw_colored_polygon(SvgArt.ellipse(Vector2(32, 60) + O, 26.0, 22.0, 0.0, 20), Color(INK, 0.1))
 			SvgArt.stroke(ci, "M30 30C40 44 40 62 30 76", Color(1, 1, 1, 0.5), 4.0, O)
 			ci.draw_circle(Vector2(20, 46) + O, 6.0, Color.WHITE)
 			ci.draw_circle(Vector2(19, 46) + O, 3.0, INK)

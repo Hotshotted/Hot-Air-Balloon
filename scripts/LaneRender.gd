@@ -39,16 +39,13 @@ var _ship_buf := PackedFloat32Array()
 var _storm: ColorRect
 var _storm_mat: ShaderMaterial
 var lightning: LightningFx
-var _rev_labels: Array[Label] = []
-var _wind_labels: Array[Label] = []      # per layer: arrows and speed at the right edge (bigger = faster)
-var _wind_shown := PackedInt32Array()
+var _pills: Array[LayerPill] = []        # per layer: the navy pill at the left edge (direction, speed, reversal countdown)
 var _pv_dots: MultiMeshInstance2D        # drift preview: the balloon's path if the burner keeps firing
 var _pv_dots2: MultiMeshInstance2D       # ...and if it is released now
 var _pv_dot_buf2 := PackedFloat32Array()
 var _pv_ghosts: MultiMeshInstance2D      # ...and where each hazard will be at the end of it
 var _pv_dot_buf := PackedFloat32Array()
 var _pv_ghost_buf := PackedFloat32Array()
-var _rev_shown := PackedInt32Array()
 var _tk: MultiMeshInstance2D
 var _cn: MultiMeshInstance2D
 var _tk_buf := PackedFloat32Array()
@@ -157,21 +154,12 @@ func _ready() -> void:
 	fx = FxLayer.new()
 	fx.lanes = lanes
 	add_child(fx)
-	# the visible countdown of a reversing layer: a small label at the left edge, one per layer
-	_rev_shown.resize(Lanes.MAX_LANES)
+	# the wind of every layer at its left edge: a small navy pill (chevrons by strength, "calm", or a reversal countdown)
 	for i in Lanes.MAX_LANES:
-		var l := Ui.label("", 30, HORIZONTAL_ALIGNMENT_LEFT, Vector2(8, 0), Vector2(120, 40))
-		l.visible = false
-		add_child(l)
-		_rev_labels.append(l)
-	# the wind of every layer, constant: arrows (1-4 by strength) and px/s at the right edge
-	_wind_shown.resize(Lanes.MAX_LANES)
-	for i in Lanes.MAX_LANES:
-		var wl := Ui.label("", 22, HORIZONTAL_ALIGNMENT_RIGHT, Vector2(Lanes.W - 190.0, 0), Vector2(182, 40))
-		wl.modulate = Color(1, 1, 1, 0.34)
-		wl.visible = false
-		add_child(wl)
-		_wind_labels.append(wl)
+		var pl := LayerPill.new()
+		pl.visible = false
+		add_child(pl)
+		_pills.append(pl)
 	# the drift preview: dots along the predicted path, a ring per hazard where it will be
 	var dm := ShapeMesh.new()
 	dm.circle(Vector2.ZERO, 1.0, Color.WHITE, false, 0.0, 0.0, 8)
@@ -191,11 +179,6 @@ func _ready() -> void:
 	_pv_ghost_buf.resize(Lanes.MAX_HAZ * HZ_STRIDE)
 	_built = true
 
-## The subtle speed cue at a layer's edge: just the speed in px/s rounded to 5 (the direction and the speed are read from
-## how the clouds, birds and particles of the layer move); for layers whose speeds are alike.
-static func wind_text(w: float) -> String:
-	return str(int(round(absf(w) / 5.0)) * 5)
-
 func _make_mm(mesh: Mesh, count: int, colors: bool, mat: Material, _stride: int = WIND_STRIDE) -> MultiMeshInstance2D:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_2D
@@ -212,9 +195,12 @@ func _make_mm(mesh: Mesh, count: int, colors: bool, mat: Material, _stride: int 
 
 # ---- the small meshes of the wind decoration ----
 
+## A wind ribbon (nominal length 100, stretched along x by the shader to the ribbon's length; the arrowhead at the tip stays its size, UV.x 1): a gently
+## waving white stroke with an arrowhead. It points +x; the shader flips it for a layer blowing the other way.
 func _streak_mesh() -> ArrayMesh:
 	var m := ShapeMesh.new()
-	m.poly([Vector2(0, -1.5), Vector2(-1, -1.5), Vector2(-1, 1.5), Vector2(0, 1.5)], Color.WHITE, false)
+	m.polyline([Vector2(-100.0, 0.0), Vector2(-75.0, -5.0), Vector2(-50.0, 0.0), Vector2(-25.0, 5.0), Vector2(0.0, 0.0)], 8.0, Color.WHITE, 0.0)
+	m.polyline([Vector2(-20.0, -15.0), Vector2(0.0, 0.0), Vector2(-20.0, 15.0)], 8.0, Color.WHITE, 1.0)
 	return m.build()
 
 ## A cloud: a flat-bottomed puff (white fill, UV.x 0) with a soft blue-grey outline (UV.x 1); the shader tints both.
@@ -228,9 +214,6 @@ func _cloud_mesh() -> ArrayMesh:
 	pts.append(Vector2(38.0, 8.0))
 	pts.append(Vector2(-38.0, 8.0))
 	m.poly(pts, Color.WHITE, false, 0.0)
-	var outline: Array = pts.duplicate()
-	outline.append(pts[0])
-	m.polyline(outline, 3.0, Color.WHITE, 1.0)
 	return m.build()
 
 ## A tiny far-off bird: a V that flaps (the shader moves the wing tips).
@@ -290,10 +273,12 @@ func on_setup() -> void:
 	var nc := 0
 	var ns := 0
 	for i in L.n_lanes:
-		var strength := clampf(absf(L.lane_base[i]) / 200.0, 0.0, 1.0)
-		for j in Lanes.PARTS_PER_LANE:
-			_wind_instance(_streak_buf, np, float(i), rng.randf() * Lanes.W, rng.randf_range(0.1, 0.9), 0.0,
-				1.0, rng.randf_range(24.0, 70.0) * (0.6 + strength), 0.5, 0.0)
+		var strength := clampf(absf(L.lane_base[i]) / 220.0, 0.0, 1.0)
+		var calm := absf(L.lane_base[i]) < 30.0
+		var ribbons := 1 if calm else mini(1 + int(strength * 4.0), Lanes.PARTS_PER_LANE)   # more ribbons, and longer, the faster the layer
+		for j in ribbons:
+			_wind_instance(_streak_buf, np, float(i), rng.randf() * Lanes.W, rng.randf_range(0.12, 0.88), 0.0,
+				1.0, (60.0 if calm else (130.0 + 300.0 * strength)) * rng.randf_range(0.8, 1.2), 0.35 if calm else rng.randf_range(0.6, 0.9), 0.0)
 			np += 1
 		for c in Lanes.CLOUDS_PER_LANE:   # clouds: every layer has some, sized by luck, all moving at exactly the layer's wind
 			_wind_instance(_cloud_buf, nc, float(i), (float(c) + rng.randf_range(0.0, 0.8)) * Lanes.W / float(Lanes.CLOUDS_PER_LANE),
@@ -347,18 +332,13 @@ func on_setup() -> void:
 	_mk.multimesh.visible_instance_count = 1 if L.goal == Flights.DELIVERY else 0
 	_ship.multimesh.visible_instance_count = 1 if L.ship_on else 0
 	_storm.visible = L.storm_on
-	for i in Lanes.MAX_LANES:   # reversing layers: their countdown labels
-		var on_rev := i < L.n_lanes and L.lane_rev[i] > 0.0
-		_rev_labels[i].visible = on_rev
-		_rev_shown[i] = -1
-		if on_rev:
-			_rev_labels[i].position = Vector2(8.0, Lanes.BAND_BOTTOM - (float(i) + 0.5) * L.lane_h - 20.0)
-	for i in Lanes.MAX_LANES:   # the wind label of every layer
-		var wl := _wind_labels[i]
-		wl.visible = i < L.n_lanes
-		_wind_shown[i] = -9999
+	for i in Lanes.MAX_LANES:   # the pill of every layer
+		var pl := _pills[i]
+		pl.visible = i < L.n_lanes
 		if i < L.n_lanes:
-			wl.position = Vector2(Lanes.W - 190.0, Lanes.BAND_BOTTOM - (float(i) + 0.5) * L.lane_h - 22.0)
+			pl.position = Vector2(14.0, Lanes.BAND_BOTTOM - (float(i) + 0.5) * L.lane_h - LayerPill.H * 0.5)
+			pl.text = "?"
+			pl.set_state(L.lane_wind[i], ceili(L.rev_timer(i)) if L.lane_rev[i] > 0.0 else 0)
 	# haze
 	_haze.visible = L.haze_on
 	if L.haze_on:
@@ -476,9 +456,9 @@ func update(dt: float) -> void:
 	for i in L.n_lanes:
 		var b2 := i * HZ_STRIDE
 		var tank_on := L.pk_on[i] == 1
-		_tk_buf[b2] = 1.25 if tank_on else 0.0
+		_tk_buf[b2] = 1.0 if tank_on else 0.0
 		_tk_buf[b2 + 3] = L.pk_x[i]
-		_tk_buf[b2 + 5] = 1.25 if tank_on else 0.0
+		_tk_buf[b2 + 5] = 1.0 if tank_on else 0.0
 		_tk_buf[b2 + 7] = L.pk_y[i]
 		var coin_on := L.cn_on[i] == 1
 		_cn_buf[b2] = 1.0 if coin_on else 0.0
@@ -522,17 +502,8 @@ func update(dt: float) -> void:
 		_ship.multimesh.buffer = _ship_buf
 	if L.storm_on:
 		_storm_mat.set_shader_parameter("top_y", L.storm_y)
-	for i in L.n_lanes:
-		if L.lane_rev[i] > 0.0:
-			var secs := ceili(L.rev_timer(i))
-			if secs != _rev_shown[i]:
-				_rev_shown[i] = secs
-				_rev_labels[i].text = "<> %d" % secs
-	for i in L.n_lanes:   # (constant winds: the text only changes in a reversing layer)
-		var wq := int(round(L.lane_wind[i] / 5.0))
-		if wq != _wind_shown[i]:
-			_wind_shown[i] = wq
-			_wind_labels[i].text = wind_text(L.lane_wind[i])
+	for i in L.n_lanes:   # (constant winds: the pill only changes in a reversing layer)
+		_pills[i].set_state(L.lane_wind[i], ceili(L.rev_timer(i)) if L.lane_rev[i] > 0.0 else 0)
 	_update_preview(L)
 	lightning.tick()
 	fx.tick()

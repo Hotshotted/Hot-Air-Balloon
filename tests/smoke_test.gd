@@ -115,6 +115,7 @@ func win_flight(m: Node, fid: int, coins: int, fuel: float) -> void:
 		win_leg(m)
 		if l < 4:
 			step(m, 1.5, 0)
+			m.next_leg()
 
 ## All Buttons under `node`, by their text.
 func find_buttons(node: Node, out: Dictionary) -> void:
@@ -139,10 +140,12 @@ func check_everything_open(m: Node, sv: Node, what: String, cards: bool) -> void
 	check(live, "%s: every region and Flight is open (live state)" % what)
 	var mp = m.hud.map
 	var shown := true
-	for id in 24:
-		shown = shown and mp.nodes[id].visible and not mp.nodes[id].disabled
-	for r in 4:
+	for r in 4:   # the map draws one region at a time: look at each in turn
+		mp.select_region(r)
+		for i in 6:
+			shown = shown and mp.nodes[r * 6 + i].visible and not mp.nodes[r * 6 + i].disabled
 		shown = shown and not mp.region_locks[r].visible
+	mp.select_region(-1)
 	check(shown, "%s: the map shows them all open, without a reload" % what)
 	# The saved file, read back through a fresh load.
 	var file_data := read_save()
@@ -421,11 +424,12 @@ func _run() -> void:
 			if lanes.lane_rev[i] == 0.0 and lanes.lane_wind[i] != w_before[i]:
 				cs_const_all = false
 			if lanes.lane_rev[i] == 0.0:
-				var txt: String = lanes.render._wind_labels[i].text
-				var mag := int(round(absf(lanes.lane_wind[i]) / 5.0)) * 5
-				cs_labels_ok = cs_labels_ok and txt == str(mag) and lanes.render._wind_labels[i].visible and lanes.render._wind_labels[i].modulate.a < 0.5
+				var txt: String = lanes.render._pills[i].text
+				var aw := absf(lanes.lane_wind[i])
+				var want := "calm" if aw < 30.0 else (">" if lanes.lane_wind[i] > 0.0 else "<").repeat(1 if aw < 90.0 else (2 if aw < 170.0 else 3))
+				cs_labels_ok = cs_labels_ok and txt == want and lanes.render._pills[i].visible
 	check(cs_const_all, "every layer's wind is constant for 20 s in all four regions (no random gusts)")
-	check(cs_labels_ok, "every layer has only a subtle speed cue (a faint number, no arrows): direction and speed are read from the drifting sky")
+	check(cs_labels_ok, "every layer has a navy pill at its left edge: chevrons for direction and speed, or calm")
 	# --- pickups hang still ---
 	lanes.setup(6.0, false, 77, 1)
 	var cs_pk0 := Array(lanes.pk_x.slice(0, 9))
@@ -652,10 +656,12 @@ func _run() -> void:
 	var expect := roundi(tn.level_points) + roundi((par - 0.02) * tn.speed_bonus_per_s)
 	check(absi(m.score - expect) <= 12, "score = leg points + speed bonus (%d, expected ~%d)" % [m.score, expect])
 	check(m.flight_coins == roundi(tn.leg_coins), "a cleared leg pays its coins")
-	check(m.hud.banner.visible and m.hud.banner.text.contains("CLEARED"), "cleared banner")
+	check(m.hud.legdone.visible and m.hud.legdone.title.text == "LEG 1 LANDED" and not m.hud.pause_btn.visible, "the leg-complete screen says LEG 1 LANDED")
 	var fuel_before: float = m.fuel
 	step(m, 1.5, 0)
-	check(m.screen == MainS.SCREEN_PLAY and m.balloon.on_ground and m.balloon.visible, "next leg starts on the ground")
+	check(m.screen == MainS.SCREEN_CLEAR, "the leg-complete screen waits for NEXT LEG (no auto-advance)")
+	m.hud.legdone.next_btn.pressed.emit()
+	check(m.screen == MainS.SCREEN_PLAY and m.balloon.on_ground and m.balloon.visible and not m.hud.legdone.visible, "NEXT LEG starts the next leg on the ground")
 	check(absf(m.fuel - fuel_before) < 0.01, "propane carries over into the next leg (%.1f)" % m.fuel)
 	check(m.leg == 1 and m.hud.level_label.text.contains("LEG 2/5"), "leg 2 of 5")
 	check(m.lanes.wind_for(1.5) > w1, "winds get faster leg by leg")
@@ -674,6 +680,7 @@ func _run() -> void:
 	check(m.leg == 2, "leg 3 reached")
 	# The clock only runs once the balloon has left the ground.
 	step(m, 1.5, 0)
+	m.next_leg()
 	m.start_flight(0)
 	clear_sky(m)
 	step(m, 1.0, 0)
@@ -708,6 +715,7 @@ func _run() -> void:
 		step(m, 0.05, 1)
 		if l < 4:
 			step(m, 1.5, 0)
+			m.next_leg()
 	check(m.screen == MainS.SCREEN_RESULT and m.hud.result_p.visible, "five cleared legs finish the Flight")
 	check(m.last_stars == 3 and sv.stars_of(0) == 3, "finished with enough propane and coins: 3 stars")
 	check(m.hud.result_lit[0] and m.hud.result_lit[1] and m.hud.result_lit[2], "result screen lights all three stars")
@@ -820,7 +828,7 @@ func _run() -> void:
 	for r in 4:
 		lows[RegS.SKY_LOW[r].to_html()] = true
 	check(lows.size() == 4, "each region has its own palette")
-	check(m.lanes._scn.size() == 4 and m.lanes._scn[1].size() > m.lanes._scn[0].size() - 3, "each region has its own scenery")
+	check(m.lanes.render.front.draws > 0 and m.lanes.render.parallax.draws > 0, "each region has its own scenery (hills, ridges, bunting)")
 	check(RegS.KINDS[1].has(LanesS.EAGLE) and RegS.KINDS[1].has(LanesS.CABLE), "Alps: eagles and cable cars")
 	check(RegS.KINDS[2].has(LanesS.CARPET) and RegS.KINDS[3].has(LanesS.GLIDER) and RegS.KINDS[3].has(LanesS.EAGLE), "Sahara carpets, Himalayas gliders and eagles")
 	# Hazard sets open up across a region's Flights.
@@ -993,13 +1001,14 @@ func _run() -> void:
 	sv.data["stars"][0] = 3
 	sv.data["stars"][1] = 1
 	mp.refresh()
-	check(not mp.nodes[2].disabled and mp.nodes[3].disabled and mp.stars_label.text == "stars 4/72" and mp.region_stars[0].text.begins_with("4/18"), "stars and unlocks show on the map")
+	check(not mp.nodes[2].disabled and mp.nodes[3].disabled and mp.stars_label.text == "4 / 72" and mp.region_stars[0].text.begins_with("4/18"), "stars and unlocks show on the map")
 	check(mp.suggested == 2 or mp.suggested == 1, "a ring marks where to fly next")
 	sv.unlock_everything()
 	mp.refresh()
+	mp.select_region(3)
 	check(mp.nodes[23].visible and not mp.nodes[23].disabled and not mp.region_locks[3].visible, "unlock-all opens every region")
 	sv.reset_all()
-	mp.refresh()
+	mp.select_region(-1)
 	mp.nodes[0].pressed.emit()
 	check(m.selected == 0 and m.screen == MainS.SCREEN_MENU, "tapping a node opens the Flight screen")
 	# Save v2: an old (v1) file gets the new fields.
@@ -1182,7 +1191,7 @@ func _run() -> void:
 	var base_s := snap()
 	m.hud.map.shop_btn.pressed.emit()
 	check(m.screen == MainS.SCREEN_SHOP and shop.visible and not m.hud.map.visible and not m.hud.gauge.visible, "SHOP opens from the map")
-	check(shop.coins_label.text == "coins 400" and shop.category == 0, "shows the coins; envelopes first")
+	check(shop.coins_label.text == "400" and shop.category == 0, "shows the coins; envelopes first")
 	var vis := 0
 	for sl in shop.slots:
 		vis += 1 if sl.visible else 0
@@ -1660,7 +1669,7 @@ func _run() -> void:
 	m.balloon.heat = 1.0
 	step(m, 0.3, 1)
 	check(m.screen == MainS.SCREEN_PLAY and m.balloon.position.y >= LanesS.GOAL_Y + 13.0, "stars left: the top does not count (the balloon is held under it)")
-	check(m.hud.goal_label.text.begins_with("Stars 0 / 4"), "the HUD counts the stars")
+	check(m.hud.goal_label.text.begins_with("Collect the stars"), "the goal line tells you to collect the stars (no running count on the sky)")
 	for q in 3:
 		m.balloon.position = Vector2(300.0, LanesS.BAND_BOTTOM - (float(m.lanes.gs_lane[q]) + 0.5) * m.lanes.lane_h)
 		m.balloon.rise = 0.0
@@ -1845,7 +1854,7 @@ func _run() -> void:
 	m.hud.hint_label.visible = false
 	m.start_flight(7)
 	check(not m.hud.hint_label.visible, "...and only the first time")
-	check(m.hud.tool_btns[0].text == "SANDBAG  x2", "the button shows its charges")
+	check(m.hud.tool_badges[0].text == "2", "the tile shows its charges in a badge")
 	# Sandbag: an instant climb burst, no propane, limited per leg.
 	calm(m)
 	m.balloon.on_ground = false
@@ -1873,7 +1882,7 @@ func _run() -> void:
 	m.tool_charges[0] = 2
 	m.use_tool(0)
 	check(m.balloon.rise <= tn.max_climb_speed + 0.01, "a Sandbag on top of a fast climb still respects the cap (%.0f)" % m.balloon.rise)
-	check(m.tool_charges[0] == 1 and m.hud.tool_btns[0].text == "SANDBAG  x1" and not m.hud.tool_btns[0].disabled, "one charge left")
+	check(m.tool_charges[0] == 1 and m.hud.tool_badges[0].text == "1" and not m.hud.tool_btns[0].disabled, "one charge left")
 	check(m.use_tool(0) and m.tool_charges[0] == 0 and m.hud.tool_btns[0].disabled, "the second one is the last: the button greys out")
 	check(not m.use_tool(0), "no charges left: it does nothing")
 	m.start_flight(7)
@@ -2187,14 +2196,14 @@ func _run() -> void:
 	for i in range(1, 40):
 		counts_down = counts_down and (tvals[i] < tvals[i - 1] + 0.001 or tvals[i - 1] < 0.3)
 	check(counts_down, "the timer counts down to the flip, then starts again")
-	var lab = m.lanes.render._rev_labels[rl]
+	var lab = m.lanes.render._pills[rl]
 	m.lanes.update(0.05)
 	check(lab.visible and lab.text.begins_with("<> ") and int(lab.text.substr(3)) == ceili(m.lanes.rev_timer(rl)), "a visible countdown label sits on the layer (%s)" % lab.text)
 	var other_hidden := true
 	for i in m.lanes.n_lanes:
 		if m.lanes.lane_rev[i] == 0.0:
-			other_hidden = other_hidden and not m.lanes.render._rev_labels[i].visible
-	check(other_hidden, "steady layers have no label")
+			other_hidden = other_hidden and m.lanes.render._pills[i].visible and not m.lanes.render._pills[i].text.begins_with("<>")
+	check(other_hidden, "steady layers show a plain pill, no countdown")
 	# Hazards in a reversing layer turn round with the wind and keep their gaps.
 	var hz_lane := -1
 	for i in m.lanes.n_lanes:
@@ -2416,7 +2425,8 @@ func _run() -> void:
 			var has_icon := false
 			for ch in nd.get_children():
 				has_icon = has_icon or ch is IconView
-			var is_node_btn: bool = m.hud.map.nodes.has(nd) or m.hud.shop.slots.has(nd)
+			var mpx = m.hud.map
+			var is_node_btn: bool = mpx.nodes.has(nd) or m.hud.shop.slots.has(nd) or mpx.region_cards.has(nd.get_parent()) or nd == mpx.album_btn or nd == mpx.shop_btn or nd == mpx.daily_btn
 			if not has_icon and not is_node_btn:
 				bare += 1
 		elif nd is Label:
@@ -2482,13 +2492,13 @@ func _run() -> void:
 	await real_wait(0.5)
 	# the map: a dotted route through all 24 Flights, the balloon drifting along it
 	var mo_mp7 = m.hud.map
-	var mo_route_ok: bool = mo_mp7.route.size() == 24
-	for i in range(1, 24):
-		mo_route_ok = mo_route_ok and mo_mp7.route_dist(i) > mo_mp7.route_dist(i - 1)
-	check(mo_route_ok, "the hand-drawn map has one dotted route through all 24 Flights")
+	var mo_route_ok: bool = mo_mp7.route.size() == 6 and mo_mp7._route_dots.size() > 20
+	for i in range(1, 6):
+		mo_route_ok = mo_route_ok and mo_mp7.route[i] != mo_mp7.route[i - 1]
+	check(mo_route_ok, "the map draws one dotted route winding through the six Flights of the region (%d dots)" % mo_mp7._route_dots.size())
 	var mo_bp0: Vector2 = mo_mp7._balloon_sprite.position
 	await real_wait(1.2)
-	check(mo_mp7._balloon_sprite.position != mo_bp0 or mo_mp7.suggested == 0, "your balloon drifts along the route")
+	check(mo_mp7._balloon_sprite.position != mo_bp0 and mo_mp7._balloon_sprite.position.y < mo_mp7.tile_center(mo_mp7.suggested).y, "your balloon is parked above the next Flight, bobbing")
 	# stars animate in: earn stars, refresh, the pops play and then the stars are lit
 	sv.record_flight(0, 3, 500)
 	mo_mp7.refresh()
@@ -2580,7 +2590,7 @@ func _run() -> void:
 	clear_sky(m)
 	m.fuel = 64.0
 	win_leg(m)
-	check(m.screen == MainS.SCREEN_CLEAR and m.hud.carry.visible and is_equal_approx(m.hud.carry_frac, m.fuel / tn.propane_start), "between legs a gauge shows the propane carried into the next leg's tank")
+	check(m.screen == MainS.SCREEN_CLEAR and m.hud.legdone.visible and is_equal_approx(m.hud.legdone.frac, m.fuel / tn.propane_start), "between legs a card shows the propane carried into the next leg's tank")
 	await real_wait(0.9)
 	check(absf(m.hud.carry_shown - m.hud.carry_frac) < 0.01 and m.hud.carry_shown > 0.5, "...and fills to it")
 	# the music glides between modes (never a cut) and the volumes start sensible
@@ -2827,7 +2837,7 @@ func _run() -> void:
 	var mp2 = m.hud.map
 	check(not mp2.nodes[23].visible and mp2.region_locks[3].visible, "(a fresh save: later regions are locked on the map)")
 	tbtn["Add 1000 coins"].pressed.emit()
-	check(sv.coins == 1000 and read_save()["coins"] == 1000 and mp2.coins_label.text == "coins 1,000", "Add 1000 coins: live, saved, and shown on the map")
+	check(sv.coins == 1000 and read_save()["coins"] == 1000 and mp2.coins_label.text == "1,000", "Add 1000 coins: live, saved, and shown on the map")
 	# Unlock all regions.
 	tbtn["Unlock all regions"].pressed.emit()
 	check_everything_open(m, sv, "Unlock all regions", false)
@@ -2857,7 +2867,9 @@ func _run() -> void:
 	for r in 4:
 		flag_all = flag_all and sv.region_unlocked(r)
 	for id in 24:
+		mp2.select_region(id / 6)
 		flag_all = flag_all and sv.flight_unlocked(id) and mp2.nodes[id].visible and not mp2.nodes[id].disabled
+	mp2.select_region(-1)
 	check(flag_all and not mp2.region_locks[3].visible, "?unlockall: every region and Flight is open on the map")
 	check(not read_save()["unlock_all"] and sv.total_stars() == 0 and sv.take_new_region() == -1, "...without writing anything to the save (and no spurious 'new region' message)")
 	DebugFlags.parse(["tune"])

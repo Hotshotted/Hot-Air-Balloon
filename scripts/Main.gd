@@ -80,6 +80,7 @@ func _ready() -> void:
 	hud.back_pressed.connect(func(): hud.nav_dir = -1; _show_map())
 	hud.daily_pressed.connect(_open_daily)
 	hud.boost_pressed.connect(_on_boost)
+	hud.next_leg_pressed.connect(next_leg)
 	hud.retry_pressed.connect(_on_retry)
 	hud.album_pressed.connect(_show_album)
 	hud.album_closed.connect(func(): hud.nav_dir = -1; _show_map())
@@ -362,6 +363,7 @@ func _begin_leg() -> void:
 	snap_picked = coins_picked
 	snap_score = score
 	hud.set_flight_hud(true)
+	hud.reset_goal()
 	hud.set_goal_icon(recipe.goal)
 	sfx.set_music(2)
 	hud.hide_overlays()
@@ -370,7 +372,6 @@ func _begin_leg() -> void:
 	_air_pct = -1
 	_prog_key = -1
 	_update_progress()
-	hud.show_banner("LEG %d / %d\n%s" % [leg + 1, int(Tuning.legs_per_flight), Flights.GOAL_HINTS[recipe.goal]], 1.6)
 	_sync_tools()
 	for t in tool_avail:   # a new tool gets a one-line intro the first time it is on offer
 		if not Save.tool_seen(t):
@@ -425,9 +426,11 @@ func _clear_leg() -> void:
 	if leg >= int(Tuning.legs_per_flight):
 		_finish_flight()
 		return
-	hud.show_banner("LEG %d CLEARED\n+%d  speed +%d" % [leg, roundi(Tuning.level_points), last_bonus], CLEAR_HOLD)
-	hud.show_carry(fuel / Tuning.propane_start)
+	_prog_key = -1
 	_update_progress()
+	hud.set_flight_hud(false)
+	hud.show_leg_done(Regions.NAMES[flight_region], flight_index + 1, leg, int(Tuning.legs_per_flight), fuel / Tuning.propane_start, _can_boost())
+	sfx.set_music(1)
 	clear_left = CLEAR_HOLD
 	screen = SCREEN_CLEAR
 
@@ -481,16 +484,26 @@ func _proceed(action: Callable) -> void:
 	else:
 		action.call()
 
-## Rewarded: "+50% propane" on the ground at the start of a leg.
+## The leg-complete screen's NEXT LEG button.
+func next_leg() -> void:
+	if screen == SCREEN_CLEAR and clear_left <= 0.0 and not paused:
+		_begin_leg()
+
+func _can_boost() -> bool:
+	return Tuning.ads_enabled and boosts_used < int(Tuning.ad_boost_max_per_flight) and fuel <= Tuning.ad_boost_below * Tuning.propane_start
+
+## Rewarded: "+50% propane" on the ground at the start of a leg, or on the leg-complete screen for the next one.
 func _on_boost() -> void:
-	if screen != SCREEN_PLAY or ads.is_showing():
+	if (screen != SCREEN_PLAY and screen != SCREEN_CLEAR) or ads.is_showing():
 		return
 	ads.show("boost", func(ok: bool):
 		if ok:
 			boosts_used += 1
 			fuel = minf(fuel + Tuning.propane_start * Tuning.ad_boost_frac, Tuning.propane_start)
 			hud.set_fuel(fuel / Tuning.propane_start)
-			_update_progress())
+			_update_progress()
+			if screen == SCREEN_CLEAR:
+				hud.show_leg_done(Regions.NAMES[flight_region], flight_index + 1, leg, int(Tuning.legs_per_flight), fuel / Tuning.propane_start, _can_boost()))
 
 ## Rewarded: "Retry this leg" after a failed one: back to the start of the leg with its propane, coins and score.
 func _on_retry() -> void:
@@ -556,9 +569,7 @@ func sim(dt: float) -> void:
 			lanes.update(dt)
 			balloon.idle_step(dt)
 			sfx.quiet()
-			clear_left -= dt
-			if clear_left <= 0.0:
-				_begin_leg()
+			clear_left = maxf(clear_left - dt, 0.0)
 		_:
 			lanes.preview_balloon = null
 			lanes.update(dt)
@@ -648,10 +659,10 @@ func _update_goal() -> void:
 				sfx.play("star")
 				balloon.cheer(0.7)
 				hud.show_banner("STAR!  %d LEFT" % lanes.stars_left() if lanes.stars_left() > 0 else "ALL STARS! GO UP!", 0.8)
-			var key := lanes.stars_left()
+			var key := 1 if lanes.stars_left() > 0 else 2   # (no running count on the sky: the star goals live on the leg-complete screen)
 			if key != _goal_key:
 				_goal_key = key
-				hud.set_goal_text("Stars %d / %d: collect them all, then climb" % [lanes.gs_count - key, lanes.gs_count])
+				hud.set_goal_text("Collect the stars, then climb" if key == 1 else "All stars! Climb to the bunting")
 		Flights.DELIVERY:
 			if lanes.mail_state == 0 and lanes.at_dock(balloon, 0):
 				lanes.mail_state = 1
@@ -663,11 +674,11 @@ func _update_goal() -> void:
 				hud.show_banner("DELIVERED! GO UP!", 1.0)
 			if lanes.mail_state != _goal_key:
 				_goal_key = lanes.mail_state
-				hud.set_goal_text(["Mail: pick it up at the GREEN flag", "Mail on board: drop it at the RED flag", "Mail delivered: climb to the top"][lanes.mail_state])
+				hud.set_goal_text(["Mail: pick it up at the GREEN flag", "Mail on board: drop it at the RED flag", "Mail delivered: climb to the bunting"][lanes.mail_state])
 		Flights.STORM:
 			if _goal_key != 1:
 				_goal_key = 1
-				hud.set_goal_text("A storm is rising from below: keep climbing")
+				hud.set_goal_text("A storm is rising: keep climbing")
 		Flights.LANDING:
 			if _goal_key != 1:
 				_goal_key = 1
@@ -675,7 +686,7 @@ func _update_goal() -> void:
 		_:
 			if _goal_key != 1:
 				_goal_key = 1
-				hud.set_goal_text("Climb to the top" + ("   (" + recipe.describe().substr(7) + ")" if recipe.twist_count() > 0 else ""))
+				hud.set_goal_text("Climb to the bunting")
 
 # ---- player tools ----
 

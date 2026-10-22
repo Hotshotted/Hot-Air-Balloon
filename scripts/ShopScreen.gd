@@ -32,9 +32,10 @@ func _ready() -> void:
 	_art = BalloonArt.shared()
 	add_child(Ui.icon("shop", 72, Vector2(40, 30)))
 	add_child(Ui.label("SHOP", 70, HORIZONTAL_ALIGNMENT_LEFT, Vector2(128, 24), Vector2(320, 90)))
-	add_child(Ui.icon("coin", 56, Vector2(560, 32)))
-	coins_label = Ui.label("", 44, HORIZONTAL_ALIGNMENT_RIGHT, Vector2(620, 36), Vector2(420, 70))
-	coins_label.add_theme_color_override("font_color", Ui.COL_GOLD)
+	add_child(Ui.card(Vector2(730, 26), Vector2(300, 90), Style.SURFACE_DARK, Style.R_PILL))
+	add_child(Ui.icon("coin", 62, Vector2(746, 40)))
+	coins_label = Ui.label("", 48, HORIZONTAL_ALIGNMENT_LEFT, Vector2(824, 36), Vector2(200, 70))
+	coins_label.add_theme_constant_override("outline_size", 0)
 	add_child(coins_label)
 	preview = Control.new()
 	preview.position = Vector2(230, 130)
@@ -114,7 +115,7 @@ func preview_ids() -> Array:
 	return ids
 
 func refresh() -> void:
-	coins_label.text = "coins %s" % Tuning.fmt(float(Save.coins))
+	coins_label.text = Tuning.fmt(float(Save.coins))
 	var n := Cosmetics.count(category)
 	selected = clampi(selected, 0, n - 1)
 	for c in 3:
