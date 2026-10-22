@@ -4,7 +4,7 @@ extends Node2D
 ## One scene for the whole session. Restarting is IN PLACE: the pooled hazards, effects and UI nodes
 ## stay alive (and warm); only the game state is reset.
 
-enum { SCREEN_MENU, SCREEN_PLAY, SCREEN_CLEAR, SCREEN_DEAD, SCREEN_RESULT, SCREEN_MAP, SCREEN_ALBUM, SCREEN_SHOP, SCREEN_TITLE }
+enum { SCREEN_MENU, SCREEN_PLAY, SCREEN_CLEAR, SCREEN_DEAD, SCREEN_RESULT, SCREEN_MAP, SCREEN_ALBUM, SCREEN_SHOP, SCREEN_TITLE, SCREEN_PREP }
 ## Seconds the "leg cleared" banner holds before the next leg starts.
 const CLEAR_HOLD := 1.3
 
@@ -49,6 +49,8 @@ var tool_charges := PackedInt32Array([0, 0, 0])   # sandbag, anchor, quick vent:
 const CONTROL_HINT := "HOLD anywhere to fire the burner and rise. Let go to sink."
 var _hinted := false
 var sfx: Sfx
+var planner: LegPlanner            # self-checking generation: every leg is solved by the fairness planner before it is flown
+var _plan_wait := false            # a leg is waiting for its plan (a short "preparing" pause)
 var _lt_prev := 0
 var paused := false                 # the pause menu is up: the world stands still
 var burn_override := -1             # tests: 1 = burner held, 0 = released, -1 = read the real input
@@ -64,6 +66,8 @@ func _ready() -> void:
 	balloon.lanes = lanes
 	sfx = Sfx.new()
 	add_child(sfx)
+	planner = LegPlanner.new()
+	planner.attach(self)
 	hud = $Hud
 	if DebugFlags.tune_enabled():
 		tune_panel = TunePanel.new()
@@ -97,6 +101,7 @@ func _ready() -> void:
 	hud.next_flight_pressed.connect(func(): _proceed(_on_next_flight))
 	selected = Save.suggested_flight()
 	_set_flight(selected)
+	plan_leg(0)
 	lanes.daylight = 0.0
 	lanes.setup(_eff(0), false, Flights.leg_seed(flight_seed, 0), flight_region)
 	balloon.reset()
@@ -178,7 +183,12 @@ func resume_game() -> void:
 	hud.hide_pause()
 
 ## The world map (the home screen).
+func _exit_tree() -> void:
+	if planner != null:
+		planner.detach()
+
 func _show_map() -> void:
+	_plan_wait = false
 	screen = SCREEN_MAP
 	get_tree().paused = false
 	lanes.visible = false
@@ -343,10 +353,28 @@ func start_flight(id: int) -> void:
 	hud.set_flight_coins(0)
 	_begin_leg()
 
+## Ask the planner to work out leg `l` of the current Flight (while a menu / the leg-complete screen is up).
+func plan_leg(l: int) -> void:
+	if Tuning.leg_check and l < int(Tuning.legs_per_flight):
+		planner.request(_eff(l), Flights.leg_seed(flight_seed, l), flight_region, flight_id, l)
+
 func _begin_leg() -> void:
-	recipe = Flights.leg_recipe(flight_id, leg, Flights.leg_seed(flight_seed, leg))
+	var leg_seed_v := Flights.leg_seed(flight_seed, leg)
+	var sparse_leg := false
+	if Tuning.leg_check:
+		var plan = planner.get_plan(_eff(leg), leg_seed_v, flight_region, flight_id, leg)
+		if plan == null:   # not planned yet (the player was quicker than the planner): a short pause
+			plan_leg(leg)
+			_plan_wait = true
+			screen = SCREEN_PREP
+			hud.show_banner("PREPARING THE SKY...", 60.0)
+			return
+		leg_seed_v = plan[0]
+		sparse_leg = plan[1]
+	_plan_wait = false
+	recipe = Flights.leg_recipe(flight_id, leg, leg_seed_v)
 	lanes.daylight = float(leg) / maxf(Tuning.legs_per_flight - 1.0, 1.0)
-	lanes.setup(_eff(leg), false, Flights.leg_seed(flight_seed, leg), flight_region, recipe)
+	lanes.setup(_eff(leg), false, leg_seed_v, flight_region, recipe, sparse_leg)
 	lanes.visible = true
 	_goal_key = -1
 	tool_avail = Flights.tools_for(flight_region, flight_index)
@@ -429,6 +457,7 @@ func _clear_leg() -> void:
 		return
 	_prog_key = -1
 	_update_progress()
+	plan_leg(leg)
 	hud.set_flight_hud(false)
 	hud.show_leg_done(Regions.NAMES[flight_region], flight_index + 1, leg, int(Tuning.legs_per_flight), fuel / Tuning.propane_start, _can_boost())
 	sfx.set_music(1)
@@ -809,6 +838,10 @@ func _process(raw_delta: float) -> void:
 	if _warming:
 		return
 	var delta := _frame_delta(raw_delta)
+	if screen != SCREEN_PLAY and planner.busy():   # (never while a leg is being flown: nothing is solved, nothing allocated, during play)
+		planner.tick(int(Tuning.plan_budget_ms * 1000.0))
+	if _plan_wait and not planner.busy():
+		_begin_leg()
 	if DebugFlags.perf_enabled():
 		hud.update_perf(raw_delta)
 		hud.set_perf_extra("sim %.1f s / wall %.1f s\nflight %d  leg %d/%d  layer %d/%d  wind %.0f px/s\nfuel %.0f  coins %d  hazards %d" % [

@@ -188,6 +188,7 @@ func _initialize() -> void:
 	sv.reset_all()
 	tn.ads_enabled = false   # (the ad section switches them on)
 	tn.intro_logo = false    # (the logo intro and the title screen have their own section)
+	tn.leg_check = false     # (self-checking generation has its own section: the other tests start legs at once)
 	tn.title_screen = false
 	MainS = load("res://scripts/Main.gd")
 	LanesS = load("res://scripts/Lanes.gd")
@@ -2716,6 +2717,71 @@ func _run() -> void:
 	check(au2.unlocked, "the first tap unlocks it")
 	au2.free()
 	await process_frame
+
+	# ---- 7i. self-checking generation ----
+	print("7i. self-checking generation")
+	DebugFlags.parse([])
+	sv.reset_all()
+	check(tn.hit_forgiveness >= 0.75, "the balloon's hit circles are at least 0.75 of the art (%.2f)" % tn.hit_forgiveness)
+	tn.leg_check = true
+	var pl = m.planner
+	pl.cache.clear()
+	m.start_flight(0)
+	check(m.screen != MainS.SCREEN_PLAY and m._plan_wait, "a leg that is not planned yet waits for its plan (a short pause) [screen %d wait %s check %s]" % [m.screen, str(m._plan_wait), str(tn.leg_check)])
+	for i in 900:
+		await process_frame
+		if m.screen == MainS.SCREEN_PLAY:
+			break
+	check(m.screen == MainS.SCREEN_PLAY and not m._plan_wait and pl.stats["planned"] >= 1, "...then starts once the fairness solver has checked it (%d planned)" % pl.stats["planned"])
+	var pl_plan = pl.get_plan(m._eff(0), FlightsS.leg_seed(m.flight_seed, 0), m.flight_region, m.flight_id, 0)
+	check(pl_plan != null and pl_plan[0] == FlightsS.leg_seed(m.flight_seed, 0) and not pl_plan[1], "a solvable leg keeps its own seed")
+	# the Daily Flight's seeds are planned too, and the answer is the same every time (deterministic)
+	m._set_flight(FlightsS.DAILY)
+	m.plan_leg(0)
+	pl.plan_all()
+	var d_plan = pl.get_plan(m._eff(0), FlightsS.leg_seed(m.flight_seed, 0), m.flight_region, m.flight_id, 0)
+	check(d_plan != null, "the Daily Flight's leg is planned as well")
+	var d_key: String = pl.key_of(m._eff(0), FlightsS.leg_seed(m.flight_seed, 0), m.flight_region, m.flight_id, 0)
+	pl.cache.erase(d_key)
+	m.plan_leg(0)
+	pl.plan_all()
+	check(pl.get_plan(m._eff(0), FlightsS.leg_seed(m.flight_seed, 0), m.flight_region, m.flight_id, 0) == d_plan, "...with the same answer every time")
+	# no solvable seed at all: reseeded up to the limit, then a sparser version of the leg
+	m._set_flight(7)
+	pl.force_fail = true
+	var pl_reseed0: int = pl.stats["sparse"]
+	m.plan_leg(2)
+	pl.plan_all()
+	var f_plan = pl.get_plan(m._eff(2), FlightsS.leg_seed(m.flight_seed, 2), m.flight_region, m.flight_id, 2)
+	pl.force_fail = false
+	check(f_plan != null and f_plan[1] and pl.stats["sparse"] == pl_reseed0 + 1, "with no path after every try, the sparse fallback is used")
+	var lanes_full = m.lanes
+	var rec_f = FlightsS.leg_recipe(m.flight_id, 2, FlightsS.leg_seed(m.flight_seed, 2))
+	lanes_full.setup(m._eff(2), false, FlightsS.leg_seed(m.flight_seed, 2), m.flight_region, rec_f, false)
+	var full_haz := 0
+	var full_layers := 0
+	for i in lanes_full.n_lanes:
+		full_haz += lanes_full.lane_count[i]
+		full_layers += 1 if lanes_full.lane_kind[i] >= 0 else 0
+	lanes_full.setup(m._eff(2), false, FlightsS.leg_seed(m.flight_seed, 2), m.flight_region, rec_f, true)
+	var sp_haz := 0
+	var sp_layers := 0
+	var sp_max := 0
+	for i in lanes_full.n_lanes:
+		sp_haz += lanes_full.lane_count[i]
+		sp_layers += 1 if lanes_full.lane_kind[i] >= 0 else 0
+		sp_max = maxi(sp_max, lanes_full.lane_count[i])
+	check(sp_haz < full_haz and sp_layers <= full_layers and sp_max <= 1, "the sparse version has fewer hazards (%d -> %d) and one hazard per layer" % [full_haz, sp_haz])
+	# nothing is planned while a leg is being flown
+	pl.request(m._eff(3), FlightsS.leg_seed(m.flight_seed, 3), m.flight_region, m.flight_id, 3)
+	m.screen = MainS.SCREEN_PLAY
+	for i in 5:
+		m._process(0.016)
+	check(pl.busy(), "the planner stays idle during play (no solving, no allocation)")
+	m.screen = MainS.SCREEN_CLEAR
+	pl.plan_all()
+	tn.leg_check = false
+	m.start_flight(0)
 
 	# ---- 8. restart in place ----
 	print("8. restart in place")

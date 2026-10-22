@@ -37,7 +37,7 @@ var edge_wrap := true
 var preview_seconds := 1.5
 ## Balloon size multiplier, and how much of its drawn size counts for collisions (0.85 = forgiving).
 var balloon_scale := 1.8
-var hit_forgiveness := 0.72
+var hit_forgiveness := 0.75
 
 # ---------- Wind layers ----------
 ## Layers in level 1, one more per level, never more than layers_max (the sky is a fixed height).
@@ -201,3 +201,11 @@ func fmt(v: float) -> String:
 		if left > 0 and left % 3 == 0:
 			out += ","
 	return out
+
+## Self-checking generation (LegPlanner): every generated leg is solved by the fairness planner (a coarse, early-exiting setting)
+## before it is flown; with no path it is reseeded up to leg_tries times, then replaced by a sparser version of the leg.
+var leg_check := true
+var leg_tries := 4
+var plan_dt := 0.2
+var plan_cap := 220
+var plan_budget_ms := 6.0       # milliseconds of planning per frame while a menu / leg-complete screen is up

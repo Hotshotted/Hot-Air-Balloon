@@ -40,7 +40,7 @@ enum { BIRD, KITE, BALLOON, DRONE, EAGLE, CABLE, CARPET, GLIDER, GOOSE }
 const KIND_NAME := ["a bird", "a kite", "another balloon", "a drone", "an eagle", "a cable car", "a flying carpet", "a paraglider", "a flock of geese"]
 ## Hit ellipse half sizes, speed relative to the wind of the layer, how much of the free layer height the
 ## hazard bobs through, and bob rate.
-const KIND_HX := [62.0, 44.0, 54.0, 100.0, 100.0, 56.0, 100.0, 100.0, 75.0]
+const KIND_HX := [64.0, 44.0, 54.0, 100.0, 100.0, 56.0, 100.0, 100.0, 75.0]
 const KIND_HY := [42.0, 58.0, 70.0, 36.0, 36.0, 46.0, 32.0, 68.0, 58.0]
 const KIND_SPEED := [1.55, 0.75, 0.45, 2.1, 1.8, 0.6, 1.3, 0.9, 1.25]
 const KIND_BOB := [0.35, 1.0, 0.5, 0.6, 0.3, 0.0, 0.8, 0.7, 0.5]
@@ -141,6 +141,8 @@ static var prof_on := false
 static var prof_us := PackedFloat32Array([0, 0, 0])
 const PROF_NAMES := ["Lanes.update (simulation)", "LaneRender.update (buffers, uniforms)", "setup + backdrop redraw"]
 var render: LaneRender
+var probe := false          # a solver's copy of the sky: no rendering at all (set before it enters the tree)
+var sparse := false         # the fallback version of a leg: half the hazard layers, one hazard each
 var _t := 0.0
 
 # ---- Pre-built shapes: [polygon, closed outline] ----
@@ -192,9 +194,10 @@ func _ready() -> void:
 	rg_life.resize(RING_MAX)
 	rg_max.resize(RING_MAX)
 	rg_col.resize(RING_MAX)
-	render = LaneRender.new()
-	render.lanes = self
-	add_child(render)
+	if not probe:
+		render = LaneRender.new()
+		render.lanes = self
+		add_child(render)
 	setup(1.0)
 
 static func _pair(pts: Array) -> Array:
@@ -241,7 +244,8 @@ func wind_for(lv: float) -> float:
 ## Lay out a leg of difficulty `lv`: layers, winds, hazards, pickups, coins and particles, all in place.
 ## `seed_val` >= 0 fixes the whole layout (a Flight's legs are the same every time); -1 = random.
 ## `show` fills every slot with every kind (used by the start-up pre-warm).
-func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0, rec: LegRecipe = null) -> void:
+func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0, rec: LegRecipe = null, sparse_leg: bool = false) -> void:
+	sparse = sparse_leg
 	if seed_val >= 0:
 		rng.seed = seed_val
 	recipe = rec
@@ -328,6 +332,8 @@ func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0, rec:
 			hazardous = true
 		if hazardous and not show and not jet_lane and _forced[i] < 0 and rng.randf() < empty_chance and (any_hazard or i < n_lanes - 2):
 			hazardous = false
+		if sparse and any_hazard and hazardous and not jet_lane and _forced[i] < 0 and not show and i % 2 == 0:
+			hazardous = false   # the sparse fallback: every other hazard layer stays clear
 		if not hazardous:
 			continue
 		any_hazard = true
@@ -349,7 +355,7 @@ func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0, rec:
 		var hw := 2.0 * float(KIND_HX[k]) * sc
 		var fit := int(floor(RING / (hw + min_gap)))
 		var want := roundi(density_for(lv) + rng.randf_range(-0.5, 0.5))
-		var cnt := clampi(want, 1, mini(fit, 1 if (jet_lane or region == 3) else 2))   # (at most two big hazards per layer, one in the fast jet stream)
+		var cnt := clampi(want, 1, mini(fit, 1 if (jet_lane or region == 3 or sparse) else 2))   # (at most two big hazards per layer, one in the fast jet stream)
 		var spacing := RING / float(cnt)
 		var free := maxf(spacing - hw - min_gap, 0.0)
 		var start := rng.randf() * RING
@@ -479,7 +485,8 @@ func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0, rec:
 			th_dx[t] = rng.randf_range(-30.0, 30.0)
 	clear_fx()
 	var t_setup := Time.get_ticks_usec() if prof_on else 0
-	render.on_setup()
+	if render != null:
+		render.on_setup()
 	if prof_on:
 		prof_us[2] += float(Time.get_ticks_usec() - t_setup)
 	update(0.0)
@@ -658,7 +665,8 @@ func update(dt: float) -> void:
 				rg_age[r] = -1.0
 	if prof_on:
 		prof_us[0] += float(Time.get_ticks_usec() - t_prof)
-	render.update(dt)
+	if render != null:
+		render.update(dt)
 
 ## Extra rise (px/s) from the thermals at horizontal position x (0 outside them).
 func thermal_lift(x: float) -> float:
