@@ -2,6 +2,7 @@ class_name DebugFlags
 extends RefCounted
 ## Debug switches, read from the page URL on web (or "--flag=value" user args elsewhere), so a
 ## suspected cause of a hitch can be switched off from a phone without a new build:
+##   ?debug          show the build stamp (it also shows with ?tune and ?perf); never otherwise
 ##   ?noprewarm      skip the start-up pre-warm and splash
 ##   ?perf           show a worst-frame-time readout
 ##   ?tune           show the on-screen tuning panel (TUNE button, top-right)
@@ -21,6 +22,7 @@ static var start_level := 1
 static var god := false
 static var unlockall := false
 static var preview := false
+static var debug := false
 
 static func prewarm_enabled() -> bool:
 	_load()
@@ -33,6 +35,11 @@ static func perf_enabled() -> bool:
 static func preview_enabled() -> bool:
 	_load()
 	return preview
+
+## The build stamp is only for people debugging: ?debug, ?tune or ?perf.
+static func stamp_enabled() -> bool:
+	_load()
+	return debug or tune or perf
 
 static func unlockall_enabled() -> bool:
 	_load()
@@ -56,6 +63,8 @@ static func summary() -> String:
 		parts.append("level=%d" % start_level)
 	if god:
 		parts.append("god")
+	if debug:
+		parts.append("debug")
 	if unlockall:
 		parts.append("unlockall")
 	if preview:
@@ -88,6 +97,7 @@ static func parse(args: Array[String]) -> void:
 	god = false
 	unlockall = false
 	preview = false
+	debug = false
 	for a in args:
 		var kv := a.split("=", true, 1)
 		var key := kv[0].uri_decode().to_lower()
@@ -103,6 +113,8 @@ static func parse(args: Array[String]) -> void:
 				start_level = clampi(int(val), 1, 99)
 			"god":
 				god = true
+			"debug":
+				debug = true
 			"unlockall":
 				unlockall = true
 			"preview":

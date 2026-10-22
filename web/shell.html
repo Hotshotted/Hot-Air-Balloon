@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, user-scalable=no, initial-scale=1.0">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="author" content="Clear Prop Games">
+<title>$GODOT_PROJECT_NAME</title>
+<style>
+@font-face { font-family: "Fredoka"; src: url("Fredoka.ttf") format("truetype"); font-weight: 300 700; font-display: swap; }
+html, body { margin: 0; height: 100%; background: #0d1a33; overflow: hidden; touch-action: none; }
+canvas { display: block; width: 100%; height: 100%; outline: none; opacity: 0; transition: opacity .25s ease; }
+canvas.on { opacity: 1; }
+#loader { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px;
+  background: radial-gradient(120% 90% at 50% 30%, #1d3157 0%, #0d1a33 62%, #081226 100%); transition: opacity .35s ease; z-index: 5;
+  padding-top: env(safe-area-inset-top); padding-bottom: env(safe-area-inset-bottom); }
+#loader.gone { opacity: 0; pointer-events: none; }
+.mark { width: min(34vw, 190px); height: auto; filter: drop-shadow(0 10px 18px rgba(0,0,0,.4)); }
+.spin { transform-origin: 60px 60px; animation: spin 1.1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.word { font: 600 clamp(26px, 7.4vw, 44px)/1 "Fredoka", ui-rounded, "Arial Rounded MT Bold", system-ui, sans-serif; letter-spacing: .02em; color: #fff;
+  text-shadow: 0 3px 0 #0a1020, 0 0 2px #0a1020; opacity: 0; transition: opacity .3s ease; white-space: nowrap; }
+.word.ready { opacity: 1; }
+.word b { color: #ffc933; font-weight: 600; }
+.bar { width: min(62vw, 340px); height: 16px; border-radius: 9px; background: rgba(10,16,32,.85); box-shadow: inset 0 0 0 2px rgba(157,182,227,.25), 0 6px 14px rgba(0,0,0,.35); overflow: hidden; position: relative; }
+.fill { position: absolute; left: 0; top: 0; bottom: 0; width: 0; border-radius: 9px; background: linear-gradient(#ffe066, #ffb01f); transition: width .2s ease; }
+.fill::after { content: ""; position: absolute; left: 4px; right: 4px; top: 2px; height: 4px; border-radius: 3px; background: rgba(255,255,255,.4); }
+.bar.indeterminate .fill { width: 38%; transition: none; animation: slide 1.2s ease-in-out infinite; }
+@keyframes slide { 0% { left: -40%; } 100% { left: 102%; } }
+#fail { display: none; flex-direction: column; align-items: center; gap: 18px; text-align: center; max-width: 80vw; color: #bcd0ec;
+  font: 600 18px/1.35 "Fredoka", ui-rounded, system-ui, sans-serif; }
+#fail button { font: 600 20px "Fredoka", ui-rounded, system-ui, sans-serif; color: #fff; background: #35c98a; border: 0; border-radius: 16px; padding: 12px 30px; box-shadow: 0 6px 0 #1a8a5a; }
+</style>
+$GODOT_HEAD_INCLUDE
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="loader">
+  <div id="brand" style="display:flex;flex-direction:column;align-items:center;gap:22px">
+      <svg class="mark" viewBox="0 0 120 120" aria-hidden="true">
+        <circle cx="62" cy="66" r="54" fill="#030814" opacity=".45"/>
+        <circle cx="60" cy="60" r="56" fill="#0a1020"/>
+        <circle cx="60" cy="60" r="53" fill="#1d3157"/>
+        <circle cx="60" cy="60" r="51" fill="none" stroke="#3d8bff" stroke-width="3.5"/>
+        <g class="spin">
+          <g id="blades">
+            <path d="M60 60 L53 51 L45 31 L54 14 L60 11 L66 14 L75 31 L67 51Z" transform="translate(60 60) scale(1.1) translate(-60 -60)" fill="#0a1020"/>
+            <path d="M60 60 L53 51 L45 31 L54 14 L60 11 L66 14 L75 31 L67 51Z" fill="#ffc933"/>
+            <path d="M56 46 L52 28" stroke="#fff" stroke-opacity=".55" stroke-width="2.4" stroke-linecap="round"/>
+          </g>
+          <use href="#blades" transform="rotate(120 60 60)"/>
+          <use href="#blades" transform="rotate(240 60 60)"/>
+        </g>
+        <circle cx="60" cy="60" r="11" fill="#0a1020"/>
+        <circle cx="60" cy="60" r="8" fill="#fff"/>
+      </svg>
+    <div class="word" id="word">CLEAR <b>PROP</b> GAMES</div>
+  </div>
+  <div class="bar indeterminate" id="bar"><div class="fill" id="fill"></div></div>
+  <div id="fail"><span id="fail-text"></span><button onclick="location.reload()">Try again</button></div>
+</div>
+<script src="$GODOT_URL"></script>
+<script>
+const GODOT_CONFIG = $GODOT_CONFIG;
+const GODOT_THREADS_ENABLED = $GODOT_THREADS_ENABLED;
+const engine = new Engine(GODOT_CONFIG);
+(function () {
+  const loader = document.getElementById('loader');
+  const bar = document.getElementById('bar');
+  const fill = document.getElementById('fill');
+  const word = document.getElementById('word');
+  const canvas = document.getElementById('canvas');
+  function showWord() { word.classList.add('ready'); }
+  if (document.fonts && document.fonts.load) {
+    document.fonts.load('600 40px Fredoka').then(showWord, showWord);
+    setTimeout(showWord, 1200);
+  } else { showWord(); }
+  function fail(message) {
+    bar.style.display = 'none';
+    document.getElementById('brand').querySelector('.spin').style.animation = 'none';
+    document.getElementById('fail-text').textContent = message;
+    document.getElementById('fail').style.display = 'flex';
+  }
+  const missing = Engine.getMissingFeatures({ threads: GODOT_THREADS_ENABLED });
+  if (missing.length !== 0) {
+    fail("This browser can't run the game. Please try the latest Chrome, Safari or Firefox.");
+    return;
+  }
+  engine.startGame({
+    onProgress: function (current, total) {
+      if (total > 0) {
+        bar.classList.remove('indeterminate');
+        fill.style.width = Math.min(100, Math.round(current / total * 100)) + '%';
+      } else {
+        bar.classList.add('indeterminate');
+      }
+    },
+  }).then(function () {
+    canvas.classList.add('on');
+    loader.classList.add('gone');
+    setTimeout(function () { loader.style.display = 'none'; }, 450);
+  }, function () {
+    fail("Couldn't start the game. Please check your connection and try again.");
+  });
+}());
+</script>
+</body>
+</html>

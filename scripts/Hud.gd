@@ -4,6 +4,34 @@ extends CanvasLayer
 ## start-up pre-warm); after that labels are only re-texted when a value changes and panels are only
 ## shown / hidden. Buttons emit the signals below; Main decides what they mean.
 
+## The in-game loading cover (the pre-warm): an opaque brand background, the studio mark spinning, the wordmark and a bar.
+## Nothing else: no text, so nothing of the game behind it can show through.
+class SplashDraw extends Control:
+	var t := 0.0
+
+	func _process(delta: float) -> void:
+		if visible:
+			t += delta
+			queue_redraw()
+
+	func _draw() -> void:
+		var cx := size.x * 0.5
+		var cy := size.y * 0.5
+		draw_rect(Rect2(Vector2.ZERO, size), Color("0d1a33"))
+		draw_circle(Vector2(cx, cy * 0.7), 760.0, Color(Style.SURFACE_DARK_2, 0.55))
+		draw_circle(Vector2(cx, cy * 0.7), 520.0, Color(Style.SURFACE_DARK_2, 0.6))
+		Style.draw_mark(self, Vector2(cx, cy - 80.0), 110.0, t * 3.0)
+		Style.draw_wordmark(self, cx, cy + 110.0, Style.SZ_M)
+		var w := 420.0
+		var r := Rect2(cx - w * 0.5, cy + 200.0, w, 20.0)
+		draw_rect(r, Color(Style.INK, 0.8))
+		var f := fposmod(t * 0.9, 1.4) / 1.4
+		var x0 := r.position.x + (w + 140.0) * f - 140.0
+		var x1 := minf(x0 + 140.0, r.end.x)
+		x0 = maxf(x0, r.position.x)
+		if x1 > x0:
+			draw_rect(Rect2(x0, r.position.y, x1 - x0, r.size.y), Style.ACCENT)
+
 signal fly_pressed
 signal prev_pressed
 signal next_pressed
@@ -27,7 +55,7 @@ var score_label: Label
 var coins_label: Label
 var stamp_label: Label
 var banner: Label
-var splash: ColorRect
+var splash: Control               # the loading cover: the studio mark, a bar, no text (its own CanvasLayer, above everything)
 var gauge: Control
 var air_label: Label
 var goal_label: Label
@@ -114,7 +142,8 @@ func _ready() -> void:
 	coins_label = Ui.label("", 30, HORIZONTAL_ALIGNMENT_RIGHT, Vector2(440, 70), Vector2(430, 40))
 	coins_label.add_theme_color_override("font_color", Ui.COL_GOLD)
 	stamp_label = Ui.label("", 22, HORIZONTAL_ALIGNMENT_RIGHT, Vector2(560, 1870), Vector2(500, 36))
-	stamp_label.modulate = Color(1, 1, 1, 0.6)
+	stamp_label.modulate = Color(1, 1, 1, 0.45)
+	stamp_label.visible = DebugFlags.stamp_enabled()   # the build stamp is for debugging only: ?debug, ?tune or ?perf
 	var flags := DebugFlags.summary()
 	stamp_label.text = "%s  %s%s" % [BuildInfo.COMMIT, BuildInfo.TIME, ("  " + flags) if flags != "" else ""]
 	for l in [level_label, score_label, coins_label, stamp_label]:
@@ -177,13 +206,14 @@ func _ready() -> void:
 	boost_btn.pressed.connect(func(): boost_pressed.emit())
 	add_child(boost_btn)
 	_build_ad()
-	splash = ColorRect.new()
-	splash.color = Color(0.06, 0.1, 0.18, 0.97)
+	var splash_layer := CanvasLayer.new()
+	splash_layer.layer = 100
+	add_child(splash_layer)
+	splash = SplashDraw.new()
 	splash.size = Vector2(Lanes.W, Lanes.H)
 	splash.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	splash.visible = false
-	add_child(splash)
-	splash.add_child(Ui.label("WIND LAYERS\nloading...", 64, HORIZONTAL_ALIGNMENT_CENTER, Vector2(0, 780), Vector2(Lanes.W, 300)))
+	splash_layer.add_child(splash)
 	if DebugFlags.perf_enabled():
 		_perf_label = Ui.label("", 26, HORIZONTAL_ALIGNMENT_LEFT, Vector2(14, 300), Vector2(900, 400))
 		_perf_label.modulate = Color(0.6, 1, 0.6, 0.95)

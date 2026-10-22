@@ -83,6 +83,9 @@ jobs:
           sed "s/__BUILD__/$SHORT/" web/cache_bust.snippet.html > build/cache_bust.html
           sed -i '/<head>/r build/cache_bust.html' build/web/index.html
           grep -c "version.txt" build/web/index.html
+          cp assets/fonts/Fredoka.ttf build/web/Fredoka.ttf   # (the loading page's wordmark font)
+          grep -q "Clear Prop" build/web/index.html
+          ! grep -q '\$GODOT_' build/web/index.html
           ls -la build/web
 
       - uses: actions/upload-pages-artifact@v3

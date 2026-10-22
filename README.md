@@ -1,6 +1,6 @@
 # Wind Layers
 
-A Frogger-style hot air balloon game (working title). Side view, low-poly shapes with black outlines.
+A hot air balloon game by **Clear Prop Games** (working title). Side view, low-poly shapes with black outlines.
 
 **Play:** https://hotshotted.github.io/Hot-Air-Balloon/
 
@@ -110,6 +110,7 @@ Everything that repeats is pooled in fixed arrays, built once and drawn during t
 
 | Flag | Effect |
 | --- | --- |
+| `?debug` | show the build stamp (small, bottom-right); it also shows with `?tune` and `?perf`, never otherwise |
 | `?perf` | rolling frame-time graph, worst-frame readout, script time per frame, hitch log, sim-vs-wall clock |
 | `?tune` | TUNE button (top-right): live sliders for buoyancy, burner, speed caps, winds, hazard density, propane...; **Copy values** puts the changed values on the clipboard |
 | `?preview=on` | debug: show the drift preview (two dotted paths + hazard ghosts); off by default |
@@ -120,7 +121,7 @@ Everything that repeats is pooled in fixed arrays, built once and drawn during t
 
 In the `?tune` panel: add coins, unlock all regions (every region and Flight, saved at once), 3-star everything (also unlocks everything and awards all postcards), reset save, reset daily, next day (to test streaks), and sliders for every setting above. The screen you are on refreshes at once; no reload needed.
 
-Combine with `&`, e.g. `?tune&perf&level=6`. Active flags are shown next to the build stamp (commit + UTC time, bottom-right).
+Combine with `&`, e.g. `?tune&perf&level=6`. The build stamp (commit + UTC time, with the active flags) is hidden from players and shows only with `?debug`, `?tune` or `?perf`.
 
 ## Project
 
@@ -129,3 +130,8 @@ Combine with `&`, e.g. `?tune&perf&level=6`. Active flags are shown next to the 
 - Pooling: hazards, pickups, particles and sparks live in fixed arrays filled in place when a level starts; restarting is in place; a start-up pre-warm draws every shape behind a splash. Nothing is allocated while playing (the smoke test checks it).
 - CI (`.github/workflows/deploy.yml`): import, headless smoke test (`tests/smoke_test.gd`), web export with a commit-hash name and a stale-page check, deploy to GitHub Pages.
 - `tests/fairness_sim.gd` is a planner that searches every generated leg for a clear path under a control scheme's rules (not run in CI; see its header).
+
+
+## Credits
+
+A Clear Prop Games game. Fonts: Fredoka and Nunito (SIL OFL 1.1, see `assets/fonts/`).

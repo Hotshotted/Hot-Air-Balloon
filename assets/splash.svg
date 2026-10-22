@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1280" viewBox="0 0 720 1280">
+  <defs>
+    <radialGradient id="bg" cx="0.5" cy="0.3" r="0.9">
+      <stop offset="0" stop-color="#1d3157"/>
+      <stop offset="0.62" stop-color="#0d1a33"/>
+      <stop offset="1" stop-color="#081226"/>
+    </radialGradient>
+    <g id="blade">
+      <path d="M0 0 L-7 -9 L-15 -29 L-6 -46 L0 -49 L6 -46 L15 -29 L7 -9Z" transform="scale(1.1)" fill="#0a1020"/>
+      <path d="M0 0 L-7 -9 L-15 -29 L-6 -46 L0 -49 L6 -46 L15 -29 L7 -9Z" fill="#ffc933"/>
+    </g>
+  </defs>
+  <rect width="720" height="1280" fill="url(#bg)"/>
+  <g transform="translate(360 600) scale(3.2)">
+    <circle cx="2" cy="6" r="54" fill="#030814" opacity=".45"/>
+    <circle r="56" fill="#0a1020"/>
+    <circle r="53" fill="#1d3157"/>
+    <circle r="51" fill="none" stroke="#3d8bff" stroke-width="3.5"/>
+    <use href="#blade"/>
+    <use href="#blade" transform="rotate(120)"/>
+    <use href="#blade" transform="rotate(240)"/>
+    <circle r="11" fill="#0a1020"/>
+    <circle r="8" fill="#fff"/>
+  </g>
+</svg>

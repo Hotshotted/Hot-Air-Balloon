@@ -2343,6 +2343,37 @@ func _run() -> void:
 	check(bad_goal == 0, "mooring platforms sit on a layer's centre line, on the screen; the airship stays on screen")
 	m.start_flight(0)
 
+	# ---- 7c. studio branding, loading page, build stamp ----
+	print("7c. studio branding, loading page, build stamp")
+	check(Style.STUDIO == "Clear Prop Games" and Style.STUDIO_WORDS == ["CLEAR", "PROP", "GAMES"], "the studio is Clear Prop Games")
+	var shell := FileAccess.get_file_as_string("res://web/shell.html")
+	check(shell.contains("CLEAR <b>PROP</b> GAMES") and shell.contains("Clear Prop Games") and shell.contains("$GODOT_URL") and shell.contains('id="bar"'), "the web loading page is the studio's: mark, wordmark, progress bar")
+	check(not shell.to_lower().contains("loading...") and not shell.to_lower().contains("studio mark"), "...with no raw loader text")
+	var presets := FileAccess.get_file_as_string("res://export_presets.cfg")
+	check(presets.contains('html/custom_html_shell="res://web/shell.html"'), "the web export uses that page instead of Godot's default")
+	var proj := FileAccess.get_file_as_string("res://project.godot")
+	check(proj.contains("Clear Prop Games") and proj.contains("boot_splash/bg_color"), "the project metadata names the studio and the boot splash has the brand colour")
+	var bad_name := 0
+	for path in ["res://README.md", "res://docs/style.md", "res://scripts/Hud.gd", "res://scripts/Style.gd", "res://web/shell.html", "res://project.godot", "res://export_presets.cfg"]:
+		var txt := FileAccess.get_file_as_string(path).to_lower()
+		if txt.contains("tailwind") or txt.contains("placeholder studio") or txt.contains("\"studio\""):
+			bad_name += 1
+	check(bad_name == 0 and FileAccess.get_file_as_string("res://README.md").contains("Clear Prop Games") and FileAccess.get_file_as_string("res://docs/style.md").contains("Clear Prop Games"), "no placeholder studio name anywhere; the README and docs/style.md credit Clear Prop Games")
+	var splash_labels := 0
+	for ch in m.hud.splash.get_children():
+		if ch is Label:
+			splash_labels += 1
+	check(splash_labels == 0 and m.hud.splash.get_parent() is CanvasLayer and m.hud.splash.get_parent().layer > m.hud.layer, "the in-game loading cover has no text and sits above every other layer")
+	DebugFlags.parse([])
+	check(not DebugFlags.stamp_enabled(), "the build stamp is hidden by default")
+	var hud_default: Control = m.hud.stamp_label
+	check(not hud_default.visible, "...it is not on screen for players")
+	for flag in ["debug", "tune", "perf"]:
+		DebugFlags.parse([flag])
+		check(DebugFlags.stamp_enabled(), "?%s shows the stamp" % flag)
+	DebugFlags.parse([])
+	check(FileAccess.file_exists("res://assets/fonts/OFL.txt") and FileAccess.file_exists("res://assets/fonts/OFL-Nunito.txt") and FileAccess.file_exists("res://assets/fonts/Fredoka.ttf"), "the Fredoka and Nunito fonts ship with their OFL licences")
+
 	# ---- 8. restart in place ----
 	print("8. restart in place")
 	m.set_process(true)
