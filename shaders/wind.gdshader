@@ -7,6 +7,7 @@ shader_type canvas_item;
 uniform float scroll[9];
 uniform float dir[9];
 uniform float lane_h = 200.0;
+uniform float streak_debug = 0.0;   // ?streaks=debug: bright magenta, thick, fully opaque
 uniform float band_bottom = 1640.0;
 const float W = 1080.0;
 
@@ -29,8 +30,14 @@ void vertex() {
 		float calm = smoothstep(0.0, 0.4, abs(d));
 		float sgn = d >= 0.0 ? 1.0 : -1.0;
 		float len = size * 0.01 * max(abs(d), 0.18) * sgn;
-		VERTEX = vec2(xh - 260.0 + VERTEX.x * len, y + VERTEX.y);
-		COLOR = vec4(1.0, 1.0, 1.0, alpha * fade * mix(0.5, 1.0, calm) * smoothstep(0.0, 0.18, abs(d) + 0.1));
+		float a = alpha * fade * mix(0.5, 1.0, calm) * smoothstep(0.0, 0.18, abs(d) + 0.1);
+		if (streak_debug > 0.5) {
+			VERTEX = vec2(xh - 260.0 + VERTEX.x * len, y + VERTEX.y * 2.2);
+			COLOR = UV.x > 0.5 ? vec4(0.0, 0.0, 0.0, 0.0) : vec4(1.0, 0.0, 1.0, max(a, 0.7));
+		} else {
+			VERTEX = vec2(xh - 260.0 + VERTEX.x * len, y + VERTEX.y);
+			COLOR = UV.x > 0.5 ? vec4(0.12, 0.28, 0.55, a * 0.30) : vec4(1.0, 1.0, 1.0, a);   // a soft blue shadow under the white streak
+		}
 	} else if (mode == 1) {
 		float x = mod(INSTANCE_CUSTOM.y + sc + 200.0, W + 400.0) - 200.0;
 		VERTEX = vec2(x + VERTEX.x * size, y + VERTEX.y * size);

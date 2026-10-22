@@ -23,6 +23,11 @@ var _th_mat: ShaderMaterial
 var _thc_mat: ShaderMaterial
 var _thc: MultiMeshInstance2D
 var _streaks: MultiMeshInstance2D
+var _cpu: StreakCpu                      # the fallback (see StreakCpu)
+var use_cpu_streaks := false
+var streak_probe := "pending"           # "pending", "ok" or "failed": the on-device self-test of the shader path
+var _probe_vp: SubViewport
+var _probe_frames := 0
 var _clouds: MultiMeshInstance2D
 var _birds: MultiMeshInstance2D
 var _hz: Array = []                      # per mesh id: MultiMeshInstance2D
@@ -92,6 +97,11 @@ func _ready() -> void:
 	_clouds = _make_mm(_cloud_mesh(), Lanes.MAX_LANES * Lanes.CLOUDS_PER_LANE, true, _wind_mat)
 	_birds = _make_mm(_bird_mesh(), Lanes.MAX_LANES * Lanes.BIRDS_PER_LANE, true, _wind_mat)
 	_streak_buf.resize(Lanes.MAX_LANES * Lanes.PARTS_PER_LANE * WIND_STRIDE)
+	_cpu = StreakCpu.new()
+	_cpu.render = self
+	_cpu.visible = false
+	add_child(_cpu)
+	_setup_streak_mode()
 	_cloud_buf.resize(Lanes.MAX_LANES * Lanes.CLOUDS_PER_LANE * WIND_STRIDE)
 	_bird_buf.resize(Lanes.MAX_LANES * Lanes.BIRDS_PER_LANE * WIND_STRIDE)
 	# --- thermals ---
@@ -179,6 +189,74 @@ func _ready() -> void:
 	_pv_ghost_buf.resize(Lanes.MAX_HAZ * HZ_STRIDE)
 	_built = true
 
+## Which streak path draws: the shader (default), the CPU fallback (the on-device self-test failed, or ?streaks=cpu), or none (?streaks=off).
+func _setup_streak_mode() -> void:
+	var mode := DebugFlags.streaks_mode()
+	_wind_mat.set_shader_parameter("streak_debug", 1.0 if mode == "debug" else 0.0)
+	_cpu.debug = mode == "debug"
+	_streaks.visible = mode != "off" and mode != "cpu"
+	use_cpu_streaks = mode == "cpu"
+	_cpu.visible = use_cpu_streaks
+	if mode == "off":
+		streak_probe = "off"
+	elif mode == "cpu":
+		streak_probe = "cpu"
+	elif DisplayServer.get_name() == "headless":
+		streak_probe = "ok"   # (no renderer to test)
+	else:
+		_start_probe()
+
+## The self-test: render ONE streak with the real shader, mesh and instance data into a tiny viewport and read the pixels back. If
+## nothing came out (a driver that cannot run the shader, an upload that fails) the CPU fallback takes over for good.
+func _start_probe() -> void:
+	_probe_vp = SubViewport.new()
+	_probe_vp.size = Vector2i(128, 64)
+	_probe_vp.transparent_bg = true
+	_probe_vp.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	var mat := ShaderMaterial.new()
+	mat.shader = _wind_mat.shader
+	mat.set_shader_parameter("lane_h", 64.0)
+	mat.set_shader_parameter("band_bottom", 64.0)
+	var sc := PackedFloat32Array()
+	sc.resize(9)
+	var dr := PackedFloat32Array()
+	dr.resize(9)
+	dr.fill(1.0)
+	mat.set_shader_parameter("scroll", sc)
+	mat.set_shader_parameter("dir", dr)
+	var mm := _make_mm(_streak_mesh(), 1, true, mat)
+	remove_child(mm)
+	_probe_vp.add_child(mm)
+	var b := PackedFloat32Array()
+	b.resize(WIND_STRIDE)
+	_wind_instance(b, 0, 0.0, 350.0 + 260.0 - 260.0, 0.5, 0.0, 1.0, 100.0, 1.0, 0.0)
+	mm.multimesh.visible_instance_count = 1
+	mm.multimesh.buffer = b
+	add_child(_probe_vp)
+	_probe_frames = Engine.get_process_frames()
+
+func _probe_tick() -> void:
+	if streak_probe != "pending" or _probe_vp == null:
+		return
+	if Engine.get_process_frames() < _probe_frames + 4:   # (rendered frames: setup calls update several times in one frame)
+		return
+	var img := _probe_vp.get_texture().get_image()
+	var lit := 0
+	if img != null and not img.is_empty():
+		for y in img.get_height():
+			for x in img.get_width():
+				if img.get_pixel(x, y).a > 0.2:
+					lit += 1
+	streak_probe = "ok" if lit >= 40 else "failed"
+	_probe_vp.queue_free()
+	_probe_vp = null
+	if streak_probe == "failed":
+		use_cpu_streaks = true
+		_streaks.visible = false
+		_cpu.visible = true
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.__streaks = {probe: '%s', lit: %d, cpu: %s}" % [streak_probe, lit, str(use_cpu_streaks).to_lower()])
+
 func _make_mm(mesh: Mesh, count: int, colors: bool, mat: Material, _stride: int = WIND_STRIDE) -> MultiMeshInstance2D:
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_2D
@@ -199,22 +277,24 @@ func _make_mm(mesh: Mesh, count: int, colors: bool, mat: Material, _stride: int 
 ## fullest toward the head, bowed like a stroke of wind. It points +x; the shader flips it for a layer blowing the other way.
 func _streak_mesh() -> ArrayMesh:
 	var m := ShapeMesh.new()
-	var top := PackedVector2Array()
-	var bottom := PackedVector2Array()
-	var n := 14
-	for i in n + 1:
-		var u := float(i) / float(n)
-		var x := -100.0 + 100.0 * u
-		var bow := -10.0 * sin(PI * u) + 4.0 * sin(TAU * u)   # a gentle S-bow
-		var th := 9.0 * pow(sin(PI * u), 0.8) * (0.3 + 0.7 * u)
-		top.append(Vector2(x, bow - th))
-		bottom.append(Vector2(x, bow + th))
-	var poly: Array = []
-	for p in top:
-		poly.append(p)
-	for i in range(n, -1, -1):
-		poly.append(bottom[i])
-	m.poly(poly, Color.WHITE, false, 0.0)
+	for pass_i in 2:   # first a soft shadow (UV.x 1: a darker blue, a little lower), then the white streak itself
+		var top := PackedVector2Array()
+		var bottom := PackedVector2Array()
+		var n := 14
+		var drop := 7.0 if pass_i == 0 else 0.0
+		for i in n + 1:
+			var u := float(i) / float(n)
+			var x := -100.0 + 100.0 * u
+			var bow := -10.0 * sin(PI * u) + 4.0 * sin(TAU * u) + drop
+			var th := 12.0 * pow(sin(PI * u), 0.8) * (0.3 + 0.7 * u)
+			top.append(Vector2(x, bow - th))
+			bottom.append(Vector2(x, bow + th))
+		var poly: Array = []
+		for p in top:
+			poly.append(p)
+		for i in range(n, -1, -1):
+			poly.append(bottom[i])
+		m.poly(poly, Color.WHITE, false, float(1 - pass_i))
 	return m.build()
 
 ## A cloud: a flat-bottomed puff (white fill, UV.x 0) with a soft blue-grey outline (UV.x 1); the shader tints both.
@@ -294,7 +374,7 @@ func on_setup() -> void:
 			var yf := 0.24 + 0.52 * (float(j) + rng.randf() * 0.8) / float(streaks)   # (inside the layer: never across a boundary)
 			var length := (70.0 + rng.randf() * 50.0) if calm else (160.0 + 330.0 * strength) * rng.randf_range(0.65, 1.3)
 			_wind_instance(_streak_buf, np, float(i), rng.randf() * (Lanes.W + 520.0), yf, 0.0,
-				1.0, length, (0.34 if calm else rng.randf_range(0.5, 0.7)), 0.0)
+				1.0, length, (0.6 if calm else rng.randf_range(0.8, 1.0)), 0.0)
 			np += 1
 		for c in Lanes.CLOUDS_PER_LANE:   # clouds: every layer has some, sized by luck, all moving at exactly the layer's wind
 			_wind_instance(_cloud_buf, nc, float(i), (float(c) + rng.randf_range(0.0, 0.8)) * Lanes.W / float(Lanes.CLOUDS_PER_LANE),
@@ -304,6 +384,7 @@ func on_setup() -> void:
 			_wind_instance(_bird_buf, ns, float(i), rng.randf() * Lanes.W, rng.randf_range(0.2, 0.8), 2.0, 1.0, rng.randf() * TAU, 0.5, 0.0)
 			ns += 1
 	_streaks.multimesh.visible_instance_count = np
+	_cpu.count = np
 	_clouds.multimesh.visible_instance_count = nc
 	_birds.multimesh.visible_instance_count = ns
 	_streaks.multimesh.buffer = _streak_buf
@@ -451,6 +532,9 @@ func update(dt: float) -> void:
 		_dir[i] = clampf(w / 60.0, -1.0, 1.0)
 	_wind_mat.set_shader_parameter("scroll", _scroll)
 	_wind_mat.set_shader_parameter("dir", _dir)
+	if use_cpu_streaks:
+		_cpu.queue_redraw()
+	_probe_tick()
 	parallax.tick(dt, L.lane_wind[clampi(L.focus_lane, 0, L.n_lanes - 1)])
 	# hazards
 	for i in L.n_lanes:

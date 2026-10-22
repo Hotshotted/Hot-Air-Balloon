@@ -157,10 +157,17 @@ text and the chunky ink border and lip on buttons and tool tiles.
 
 ## Audio plumbing
 
-- Every sound is **pre-rendered** to `assets/audio/*.wav` by `tools/make_audio.gd` from `scripts/AudioSynth.gd` (soft, short,
-  rounded; a calm music loop); nothing is synthesised on a device. The buses come from `default_bus_layout.tres`.
-- On the web the engine plays through the browser's **native sample playback** (`audio/general/default_playback_type.web`), so the
-  loops are gapless; `web/shell.html` catches the audio contexts, unlocks them on the first tap and suspends them on
-  `visibilitychange`, `pagehide` and `blur`.
-- CI loads the exported page in Chromium under **4x CPU throttle** (`tools/web_audio_check.mjs`): boot, first-tap unlock, a real-time
-  audio clock, and suspend / resume on every one of those events.
+- Every sound is **pre-rendered** (44.1 kHz) by `tools/make_audio.gd` from `scripts/AudioSynth.gd`: one-shots to `assets/audio/*.wav`,
+  the seamless loops (music, burner roar, wind, storm rumble) to `assets/audio/loops/`. Nothing is synthesised on a device. The
+  buses come from `default_bus_layout.tres`. One-shots sit 14 dB under the loops (`Sfx.SFX_TRIM_DB`) so gameplay sounds never peak
+  above the music.
+- On the web the **loops are played by the loading page itself** (`PWAudio` in `web/shell.html`, as in Pattern-Control): native,
+  gapless `AudioBufferSource` loops on the browser's audio thread, one gain per layer, a gentle limiter, driven from `Sfx.gd` with
+  levels in dB. CI copies the loops to `audio/` next to the page. One-shots use a pool of engine players (a free one is picked).
+- The page suspends every audio context on `visibilitychange`, `pagehide` and `blur`, flags `window.__pwHidden`, and the game then
+  pauses and holds its sound. Nothing comes back by itself on refocus: only the **Resume** tap (`window.__pwRelease`), or the first
+  tap on a menu screen, releases it.
+- CI (`tools/web_audio_check.js`, `?audiocheck`) loads the exported page in Chromium under **4x CPU throttle**, tees the real output
+  of every audio context into an AudioWorklet and fails on silence, clicks, dropouts, repeated buffers, clipping, any sound while
+  hidden or before Resume, no sound after Resume, a one-shot peaking within 80% of the music mix, or page errors.
+  `tools/web_streak_check.js` checks the wind streaks (see Wind streaks).

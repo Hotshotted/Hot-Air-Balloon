@@ -2,13 +2,13 @@
 
 importer="wav"
 type="AudioStreamWAV"
-uid="uid://c0rgjdrighciv"
-path="res://.godot/imported/music.wav-2937b162566447d772a8d6d8478cb5b0.sample"
+uid="uid://b0mb06x63mqr1"
+path="res://.godot/imported/rumble.wav-c27de42c4662eee1ba06fe888b04d312.sample"
 
 [deps]
 
-source_file="res://assets/audio/music.wav"
-dest_files=["res://.godot/imported/music.wav-2937b162566447d772a8d6d8478cb5b0.sample"]
+source_file="res://assets/audio/loops/rumble.wav"
+dest_files=["res://.godot/imported/rumble.wav-c27de42c4662eee1ba06fe888b04d312.sample"]
 
 [params]
 

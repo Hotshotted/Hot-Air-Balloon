@@ -2,13 +2,13 @@
 
 importer="wav"
 type="AudioStreamWAV"
-uid="uid://chdl5ghe4j2fx"
-path="res://.godot/imported/roar.wav-fa109d20738d53542abde8b97657acf1.sample"
+uid="uid://df5xpli8ktioq"
+path="res://.godot/imported/roar.wav-b3b922b512d1f568dedbebe5f3f1d3bf.sample"
 
 [deps]
 
-source_file="res://assets/audio/roar.wav"
-dest_files=["res://.godot/imported/roar.wav-fa109d20738d53542abde8b97657acf1.sample"]
+source_file="res://assets/audio/loops/roar.wav"
+dest_files=["res://.godot/imported/roar.wav-b3b922b512d1f568dedbebe5f3f1d3bf.sample"]
 
 [params]
 

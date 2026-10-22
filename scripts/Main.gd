@@ -146,6 +146,14 @@ func _select(id: int) -> void:
 
 ## After the start-up pre-warm: the logo intro (skippable) if it is on, then the title screen (or straight to the map).
 func _after_boot() -> void:
+	if DebugFlags.audiocheck_enabled():   # the web audio check: Flight 1 at once, the script drives burner and sounds
+		Tuning.leg_check = false
+		start_flight(0)
+		return
+	if DebugFlags.autoplay_flight() >= 0:   # web checks: straight into a Flight (no logo, title or planning pause)
+		Tuning.leg_check = false
+		start_flight(DebugFlags.autoplay_flight())
+		return
 	if Tuning.intro_logo:
 		hud.hide_overlays()
 		hud.intro.start(Tuning.intro_seconds)
@@ -180,6 +188,7 @@ func resume_game() -> void:
 	if not paused:
 		return
 	paused = false
+	sfx.release()   # (the player tapped Resume: the page's audio may run again)
 	hud.hide_pause()
 
 ## The world map (the home screen).
@@ -755,6 +764,8 @@ func use_tool(i: int) -> bool:
 
 ## Touches on the tool buttons (handled here so a second finger works while the first holds the burner).
 func _input(event: InputEvent) -> void:
+	if sfx.held and screen != SCREEN_PLAY and ((event is InputEventScreenTouch and event.pressed) or (event is InputEventMouseButton and event.pressed)):
+		sfx.release()   # (menus have no Resume button: the first tap after coming back brings the sound back)
 	if not sfx.unlocked and ((event is InputEventScreenTouch and event.pressed) or (event is InputEventMouseButton and event.pressed) or (event is InputEventKey and event.pressed)):
 		sfx.unlock()
 	if _warming or screen != SCREEN_PLAY or paused:
@@ -830,6 +841,35 @@ func _notification(what: int) -> void:
 				_skip_frames = Tuning.resume_skip_frames
 				_note_event("window came back")
 
+## Web: the page went to the background (it flags that itself, even when the engine gets no focus event): hold every sound, pause the
+## flight. Sound only returns when the player taps Resume (or, on the menus, the first tap after coming back).
+func _audio_background() -> void:
+	if not OS.has_feature("web"):
+		return
+	if not _page_ready:
+		_page_ready = true
+		JavaScriptBridge.eval("window.__pwGameReady = true")
+	if not sfx.held and bool(JavaScriptBridge.eval("!!window.__pwHidden")):
+		sfx.hold()
+		pause_game()
+	if OS.has_feature("web"):
+		JavaScriptBridge.eval("window.__pw = window.__pw || {}; window.__pw.paused = %s; window.__pw.held = %s; window.__pw.screen = %d" % [str(paused).to_lower(), str(sfx.held).to_lower(), screen])
+
+var _page_ready := false
+var _drv_t := 0.0
+var _drv_i := 0
+const _DRV_SOUNDS := ["pickup", "coin", "star", "thunk", "slam", "warn", "vent", "cheer"]
+
+## ?audiocheck: pulse the burner and fire a gameplay sound every half second so the web check hears every layer.
+func _audio_driver(dt: float) -> void:
+	if not DebugFlags.audiocheck_enabled() or screen != SCREEN_PLAY or paused or sfx.held:
+		return
+	_drv_t += dt
+	burn_override = 1 if fmod(_drv_t, 4.0) < 2.2 else 0
+	if _drv_t > float(_drv_i + 1) * 0.5:
+		_drv_i += 1
+		sfx.play(_DRV_SOUNDS[_drv_i % _DRV_SOUNDS.size()])
+
 ## Seconds of this run on the wall clock, without the time spent in the background.
 func run_wall_time() -> float:
 	return maxf((Time.get_ticks_msec() - _run_start_ms - _paused_total_ms) / 1000.0, 0.0)
@@ -837,6 +877,8 @@ func run_wall_time() -> float:
 func _process(raw_delta: float) -> void:
 	if _warming:
 		return
+	_audio_background()
+	_audio_driver(raw_delta)
 	var delta := _frame_delta(raw_delta)
 	if screen != SCREEN_PLAY and planner.busy():   # (never while a leg is being flown: nothing is solved, nothing allocated, during play)
 		planner.tick(int(Tuning.plan_budget_ms * 1000.0))

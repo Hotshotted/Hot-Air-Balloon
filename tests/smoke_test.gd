@@ -2708,10 +2708,12 @@ func _run() -> void:
 	check(ProjectSettings.get_setting("audio/buses/default_bus_layout", "") == "res://default_bus_layout.tres" and FileAccess.file_exists("res://default_bus_layout.tres"), "the bus layout is a static resource")
 	check(AudioServer.get_bus_index("SFX") > 0 and AudioServer.get_bus_index("Music") > 0 and AudioServer.get_bus_count() == 3, "the SFX and Music buses exist from the start (%d buses)" % AudioServer.get_bus_count())
 	var sh_txt := FileAccess.get_file_as_string("res://web/shell.html")
-	check(sh_txt.contains("visibilitychange") and sh_txt.contains("pagehide") and sh_txt.contains("blur") and sh_txt.contains("suspend()") and sh_txt.contains("pointerdown"), "the web shell unlocks audio on the first tap and suspends it when the page is hidden")
+	check(sh_txt.contains("visibilitychange") and sh_txt.contains("pagehide") and sh_txt.contains("blur") and sh_txt.contains("suspend()") and sh_txt.contains("pointerup") and sh_txt.contains("PWAudio") and sh_txt.contains("__pwRelease"), "the web shell plays the loops itself, unlocks audio on the first tap, suspends it when hidden and resumes only on Resume")
 	var wav_ok := true
-	for nm in load("res://scripts/Sfx.gd").NAMES + ["music", "roar", "wind", "rumble"]:
+	for nm in load("res://scripts/Sfx.gd").NAMES:
 		wav_ok = wav_ok and ResourceLoader.exists("res://assets/audio/%s.wav" % nm)
+	for nm in ["music", "roar", "wind", "rumble"]:
+		wav_ok = wav_ok and ResourceLoader.exists("res://assets/audio/loops/%s.wav" % nm)
 	check(wav_ok, "every sound is a pre-rendered WAV under assets/audio (nothing is synthesised on the device)")
 	check(ProjectSettings.get_setting("audio/general/default_playback_type.web", 0) == 1, "on the web the loops play through the browser's native (gapless) sample playback")
 	var au2: Node = load("res://scripts/Sfx.gd").new()

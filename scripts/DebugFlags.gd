@@ -10,6 +10,9 @@ extends RefCounted
 ##   ?level=N        start at level N
 ##   ?god            nothing can hurt the balloon (to look at hazards)
 ##   ?preview=on     debug only: show the drift preview (two dotted paths + ghost hazards). Off by default, never shown to players
+##   ?streaks=debug  draw the wind streaks bright magenta and thick (to check them on a phone); ?streaks=off hides them, ?streaks=cpu forces the CPU fallback
+##   ?autoplay=N     skip the title and fly Flight N (0-23) at once, nothing can hurt the balloon (web checks)
+##   ?audiocheck     fly Flight 1 at once with the burner pulsing and a gameplay sound every half second (the web audio check); nothing can hurt the balloon
 ##   ?unlockall      every region and Flight is open (not saved: drop the flag and the save decides again)
 ## Combine with "&", e.g.  ?perf&level=5&god
 ## The active flags are printed under the build stamp.
@@ -25,6 +28,9 @@ static var unlockall := false
 static var preview := false
 static var debug := false
 static var nosound := false
+static var streaks := ""          # "", "debug" or "off"
+static var autoplay := -1          # the Flight to fly at once (web checks), -1 = off
+static var audiocheck := false     # the web audio check drives the flight itself
 
 static func prewarm_enabled() -> bool:
 	_load()
@@ -46,6 +52,18 @@ static func sound_off() -> bool:
 static func stamp_enabled() -> bool:
 	_load()
 	return debug or tune or perf
+
+static func streaks_mode() -> String:
+	_load()
+	return streaks
+
+static func audiocheck_enabled() -> bool:
+	_load()
+	return audiocheck
+
+static func autoplay_flight() -> int:
+	_load()
+	return autoplay
 
 static func unlockall_enabled() -> bool:
 	_load()
@@ -77,6 +95,12 @@ static func summary() -> String:
 		parts.append("unlockall")
 	if preview:
 		parts.append("preview=on")
+	if streaks != "":
+		parts.append("streaks=" + streaks)
+	if autoplay >= 0:
+		parts.append("autoplay=%d" % autoplay)
+	if audiocheck:
+		parts.append("audiocheck")
 	for b in _bad:
 		parts.append("?" + b)
 	return " ".join(parts)
@@ -107,6 +131,9 @@ static func parse(args: Array[String]) -> void:
 	preview = false
 	debug = false
 	nosound = false
+	streaks = ""
+	autoplay = -1
+	audiocheck = false
 	for a in args:
 		var kv := a.split("=", true, 1)
 		var key := kv[0].uri_decode().to_lower()
@@ -128,6 +155,14 @@ static func parse(args: Array[String]) -> void:
 				nosound = true
 			"unlockall":
 				unlockall = true
+			"streaks":
+				streaks = val if val in ["debug", "off", "cpu"] else ""
+			"audiocheck":
+				audiocheck = true
+				god = true
+			"autoplay":
+				autoplay = clampi(int(val), 0, 23)
+				god = true
 			"preview":
 				preview = val in ["on", "1", "true", "yes"]
 			"v":

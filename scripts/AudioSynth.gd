@@ -4,8 +4,10 @@ extends RefCounted
 ## assets/audio/, which is what the game loads: nothing is synthesised on a player's device). Soft, short and rounded, with a calm
 ## music loop (see docs/style.md: Audio).
 
-const RATE := 11025            # effects
-const LOOP_RATE := 8000        # loops (lo-fi on purpose)
+const RATE := 44100            # effects (44.1 kHz, like Pattern-Control)
+const LOOP_RATE := 44100       # loops
+const FS_LOOP := 8000.0 / 44100.0   # the noise filters were tuned at 8 kHz: their coefficients scale with the rate
+const FS_FX := 11025.0 / 44100.0
 const BEAT := 0.6              # music: seconds per beat, 8 beats per loop
 
 ## Every one-shot, name -> stream.
@@ -42,12 +44,16 @@ static func _seq(notes: Array, rate: int, decay: float = 0.6, square: bool = fal
 		var count := int(float(n[1]) * rate)
 		var base := out.size()
 		out.resize(base + count)
+		var att := maxi(int(0.004 * rate), 1)                      # every note starts and ends at zero: no clicks between notes
+		var rel := maxi(int(minf(0.03, float(n[1]) * 0.4) * rate), 1)
 		for i in count:
 			var t := float(i) / rate
 			var env := (1.0 - float(i) / count) if not bell else exp(-t * 6.0)
-			env = lerpf(1.0, env, decay) * minf(float(i) / 40.0, 1.0)
+			env = lerpf(1.0, env, decay) * minf(float(i) / att, 1.0) * minf(float(count - 1 - i) / rel, 1.0)
 			var ph := TAU * float(n[0]) * t
-			var v := signf(sin(ph)) * 0.6 if square else sin(ph)
+			var v := sin(ph)
+			if square:   # a hollow tone (odd harmonics), smooth: no hard steps
+				v = (v + 0.35 * sin(3.0 * ph)) * 0.75
 			if bell:
 				v += 0.4 * sin(ph * 2.76)
 			out[base + i] = v * float(n[2]) * env
@@ -75,7 +81,7 @@ static func _whoosh(secs: float, rate: int) -> PackedFloat32Array:
 		seed_v = (seed_v * 1103515245 + 12345) & 0x7fffffff
 		var noise := float(seed_v) / 1073741823.5 - 1.0
 		var k := float(i) / count
-		lp += (noise - lp) * lerpf(0.05, 0.5, sin(PI * k))
+		lp += (noise - lp) * lerpf(0.05, 0.5, sin(PI * k)) * (11025.0 / float(rate))
 		out[i] = lp * sin(PI * k) * 0.5
 	return out
 
@@ -89,30 +95,34 @@ static func _noise_loop(secs: float, a: float, hum: float, hum_hz: float) -> Pac
 	for i in count:
 		seed_v = (seed_v * 1103515245 + 12345) & 0x7fffffff
 		var noise := float(seed_v) / 1073741823.5 - 1.0
-		lp += (noise - lp) * a
+		lp += (noise - lp) * a * FS_LOOP
 		var t := float(i) / LOOP_RATE
 		out[i] = lp + hum * sin(TAU * hum_hz * t)
-	var fade := int(count * 0.12)
-	for i in fade:   # blend the tail into the head so the loop has no seam
+	# seamless: the last `fade` samples are crossfaded into the first ones, and the loop starts after them
+	var fade := int(count * 0.15)
+	for i in fade:
 		var k := float(i) / fade
-		out[count - fade + i] = lerpf(out[count - fade + i], out[i], k)
+		out[count - fade + i] = lerpf(out[count - fade + i], out[i], k * k * (3.0 - 2.0 * k))
+	out = out.slice(fade)
 	var peak := 0.001
 	for v in out:
 		peak = maxf(peak, absf(v))
-	for i in count:
+	for i in out.size():
 		out[i] = out[i] / peak * 0.7
 	return out
 
 static func _roar_loop() -> PackedFloat32Array:
-	var o := _noise_loop(1.5, 0.22, 0.25, 62.5)
-	for i in o.size():   # a flutter in the flame
-		o[i] *= 0.82 + 0.18 * sin(TAU * 7.0 * float(i) / LOOP_RATE)
+	var o := _noise_loop(1.5, 0.22, 0.25, 60.0)
+	var n := float(o.size())
+	for i in o.size():   # a flutter in the flame (whole cycles over the loop: seamless)
+		o[i] *= 0.82 + 0.18 * sin(TAU * 6.0 * float(i) / n)
 	return o
 
 static func _wind_loop() -> PackedFloat32Array:
 	var o := _noise_loop(3.0, 0.1, 0.0, 1.0)
-	for i in o.size():   # slow gusting
-		o[i] *= 0.75 + 0.25 * sin(TAU * 0.667 * float(i) / LOOP_RATE)
+	var n := float(o.size())
+	for i in o.size():   # slow gusting (two whole cycles)
+		o[i] *= 0.75 + 0.25 * sin(TAU * 2.0 * float(i) / n)
 	return o
 
 static func _rumble_loop() -> PackedFloat32Array:
@@ -130,7 +140,7 @@ static func _creak(secs: float, rate: int) -> PackedFloat32Array:
 		ph += TAU * (210.0 - 70.0 * k + 18.0 * sin(k * 60.0)) / rate
 		seed_v = (seed_v * 1103515245 + 12345) & 0x7fffffff
 		var rasp := (float(seed_v) / 1073741823.5 - 1.0) * 0.25
-		out[i] = (signf(sin(ph)) * 0.35 + rasp) * sin(PI * k) * 0.55
+		out[i] = ((sin(ph) + 0.5 * sin(2.0 * ph) + 0.3 * sin(3.0 * ph)) * 0.3 + rasp * 0.5) * sin(PI * k) * 0.55
 	return out
 
 ## Thunder: a crack, then a long low roll.
@@ -144,7 +154,7 @@ static func _thunder(secs: float, rate: int) -> PackedFloat32Array:
 		seed_v = (seed_v * 1103515245 + 12345) & 0x7fffffff
 		var noise := float(seed_v) / 1073741823.5 - 1.0
 		var k := float(i) / count
-		lp += (noise - lp) * lerpf(0.5, 0.05, minf(k * 3.0, 1.0))
+		lp += (noise - lp) * lerpf(0.5, 0.05, minf(k * 3.0, 1.0)) * (11025.0 / float(rate))
 		out[i] = lp * (exp(-k * 3.2) + 0.5 * exp(-pow((k - 0.18) * 8.0, 2.0))) * 0.9
 	return out
 
@@ -155,29 +165,54 @@ static func _mix(a: PackedFloat32Array, b: PackedFloat32Array) -> PackedFloat32A
 		out[i] = (a[i] if i < a.size() else 0.0) + (b[i] if i < b.size() else 0.0)
 	return out
 
-## A calm 8-beat loop (C major: C Am F G, two beats each): a soft pad, a slow bass and a few gentle bell notes.
+## A calm 8-beat loop (C major: C Am F G, two beats each): a soft pad, a slow bass and a few gentle bell notes. Every tone is tuned to
+## a whole number of cycles over the loop and the chords crossfade (raised cosine), so the loop has no seam and nothing clicks.
 static func music_loop() -> AudioStreamWAV:
 	var chords := [[261.6, 329.6, 392.0], [220.0, 261.6, 329.6], [174.6, 220.0, 261.6], [196.0, 246.9, 293.7]]
-	var count := int(BEAT * 8.0 * LOOP_RATE)
+	var secs := BEAT * 8.0
+	var count := int(secs * LOOP_RATE)
 	var out := PackedFloat32Array()
 	out.resize(count)
 	for i in count:
 		var t := float(i) / LOOP_RATE
 		var beat := t / BEAT
-		var ch: Array = chords[int(beat / 2.0) % 4]
+		var pos := fposmod(beat / 2.0, 4.0)
 		var v := 0.0
-		for f in ch:
-			v += 0.16 * sin(TAU * f * t * 0.5) * (0.8 + 0.2 * sin(TAU * 0.25 * t))
-		var bt := fmod(beat, 2.0)
-		v += 0.26 * sin(TAU * ch[0] * 0.25 * t) * (1.0 - 0.4 * bt)
-		var step := fmod(beat * 2.0, 1.0)
-		if int(beat * 2.0) % 2 == 0:
-			var note: float = ch[int(beat * 2.0 / 2.0) % 3] * 2.0
-			v += 0.12 * sin(TAU * note * t) * exp(-step * 4.0)
+		for c in 4:
+			var d := pos - (float(c) + 0.5)
+			d = fposmod(d + 2.0, 4.0) - 2.0
+			if absf(d) >= 1.0:
+				continue
+			var g := 0.5 + 0.5 * cos(PI * d)
+			var ch: Array = chords[c]
+			var pad := 0.0
+			for f in ch:
+				pad += 0.16 * sin(TAU * _q(f * 0.5, secs) * t)
+			pad *= 0.8 + 0.2 * sin(TAU * t / secs)
+			var bt := fposmod(beat, 2.0)
+			var bass := 0.26 * sin(TAU * _q(ch[0] * 0.25, secs) * t) * (0.7 + 0.3 * cos(PI * bt))
+			v += (pad + bass) * g
+		var half := int(floor(beat * 2.0))
+		var step := fposmod(beat * 2.0, 1.0)
+		if half % 2 == 0:
+			var chn: Array = chords[(half / 4) % 4]
+			var note := _q(float(chn[(half / 2) % 3]) * 2.0, secs)
+			v += 0.12 * sin(TAU * note * t) * exp(-step * 4.0) * smoothstep(0.0, 0.03, step) * (1.0 - smoothstep(0.9, 1.0, step))
 		out[i] = v * 0.5
 	return _wav(out, LOOP_RATE, true)
 
+## A frequency tuned to a whole number of cycles over `secs` (so a loop of that length is seamless).
+static func _q(f: float, secs: float) -> float:
+	return roundf(f * secs) / secs
+
 static func _wav(samples: PackedFloat32Array, rate: int, loop: bool = false) -> AudioStreamWAV:
+	if not loop:   # a short fade in and a longer fade out on every one-shot: it can never start or stop with a click
+		var fin := int(0.003 * rate)
+		var fout := int(0.025 * rate)
+		for i in mini(fin, samples.size()):
+			samples[i] *= float(i) / fin
+		for i in mini(fout, samples.size()):
+			samples[samples.size() - 1 - i] *= float(i) / fout
 	var bytes := PackedByteArray()
 	bytes.resize(samples.size() * 2)
 	for i in samples.size():

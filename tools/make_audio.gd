@@ -8,10 +8,12 @@ func _initialize() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(out))
 	var Synth = load("res://scripts/AudioSynth.gd")
 	var n := 0
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(out + "loops/"))
 	for pack in [Synth.effects(), Synth.loops()]:
 		for name in pack:
 			var w: AudioStreamWAV = pack[name]
-			var err := w.save_to_wav(out + name + ".wav")
+			var sub := "loops/" if pack.has("music") else ""   # the loops are played by the web page itself (see web/shell.html)
+			var err := w.save_to_wav(out + sub + name + ".wav")
 			if err != OK:
 				printerr("could not write ", name)
 			n += 1
