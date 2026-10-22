@@ -393,6 +393,7 @@ func _update_progress() -> void:
 func _fail(reason: String) -> void:
 	screen = SCREEN_DEAD
 	sfx.quiet()
+	hud.set_flight_hud(false)
 	last_reason = reason
 	last_stars = 0
 	_credit()
@@ -448,6 +449,7 @@ func _finish_flight() -> void:
 		Save.record_flight(flight_id, last_stars, score)
 	_credit()
 	Save.note_flight_ended()
+	hud.set_flight_hud(false)
 	screen = SCREEN_RESULT
 	var tgt_p := int(Flights.propane_target())
 	var summary := "Score %s\nCoins earned: %d   (propane bonus %d)" % [Tuning.fmt(float(score)), flight_coins, last_propane_bonus]
