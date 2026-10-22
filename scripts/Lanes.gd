@@ -349,7 +349,7 @@ func setup(lv: float, show: bool = false, seed_val: int = -1, reg: int = 0, rec:
 		var hw := 2.0 * float(KIND_HX[k]) * sc
 		var fit := int(floor(RING / (hw + min_gap)))
 		var want := roundi(density_for(lv) + rng.randf_range(-0.5, 0.5))
-		var cnt := clampi(want, 1, mini(fit, 2))   # (at most two big hazards per layer)
+		var cnt := clampi(want, 1, mini(fit, 1 if jet_lane else 2))   # (at most two big hazards per layer, one in the fast jet stream)
 		var spacing := RING / float(cnt)
 		var free := maxf(spacing - hw - min_gap, 0.0)
 		var start := rng.randf() * RING
