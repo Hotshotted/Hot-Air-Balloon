@@ -28,8 +28,10 @@ func _ready() -> void:
 	size = Vector2(Lanes.W, Lanes.H)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_art = BalloonArt.shared()
-	add_child(Ui.label("SHOP", 70, HORIZONTAL_ALIGNMENT_LEFT, Vector2(40, 24), Vector2(400, 90)))
-	coins_label = Ui.label("", 44, HORIZONTAL_ALIGNMENT_RIGHT, Vector2(480, 36), Vector2(560, 70))
+	add_child(Ui.icon("shop", 72, Vector2(40, 30)))
+	add_child(Ui.label("SHOP", 70, HORIZONTAL_ALIGNMENT_LEFT, Vector2(128, 24), Vector2(320, 90)))
+	add_child(Ui.icon("coin", 56, Vector2(560, 32)))
+	coins_label = Ui.label("", 44, HORIZONTAL_ALIGNMENT_RIGHT, Vector2(620, 36), Vector2(420, 70))
 	coins_label.add_theme_color_override("font_color", Ui.COL_GOLD)
 	add_child(coins_label)
 	preview = Control.new()
@@ -41,7 +43,7 @@ func _ready() -> void:
 	info_label = Ui.label("", 42, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 520), Vector2(1000, 60))
 	add_child(info_label)
 	for c in 3:
-		var t := Ui.button(Cosmetics.CATEGORIES[c], 36, Vector2(40.0 + 340.0 * float(c), 596), Vector2(320, 80), Color(0.35, 0.4, 0.55))
+		var t := Ui.button(Cosmetics.CATEGORIES[c], 36, Vector2(40.0 + 340.0 * float(c), 596), Vector2(320, 80), Color(0.35, 0.4, 0.55), ["cat_env", "cat_basket", "cat_pass"][c])
 		t.pressed.connect(func(): _set_category(c))
 		add_child(t)
 		tabs.append(t)
@@ -61,12 +63,13 @@ func _ready() -> void:
 		slots.append(b)
 		slot_names.append(nl)
 		slot_prices.append(pl)
-	action_btn = Ui.button("", 52, Vector2(40, 1680), Vector2(620, 120), Color(0.95, 0.5, 0.15))
+	action_btn = Ui.button("", 52, Vector2(40, 1680), Vector2(620, 120), Color(0.95, 0.5, 0.15), "check")
 	action_btn.pressed.connect(_on_action)
 	add_child(action_btn)
-	var back := Ui.button("BACK", 52, Vector2(690, 1680), Vector2(350, 120))
+	var back := Ui.button("BACK", 52, Vector2(690, 1680), Vector2(350, 120), Ui.COL_BTN, "back")
 	back.pressed.connect(func(): back_pressed.emit())
 	add_child(back)
+	Ui.fit_safe(self)
 
 ## Opening the shop: envelopes first, with what you wear selected.
 func open() -> void:
@@ -158,14 +161,13 @@ func _draw_slot(b: Button, i: int) -> void:
 	_art.draw(b, env, bk, ps, 0.0, 0.0, 4.0 / sc)
 	b.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 	if Save.equipped(category) == i:
-		b.draw_rect(Rect2(3, 3, CARD_W - 6, CARD_H - 6), Ui.COL_GOLD, false, 6.0)
+		b.draw_rect(Rect2(3, 3, CARD_W - 6, CARD_H - 6), Style.ACCENT, false, 6.0)
 	elif i == selected:
 		b.draw_rect(Rect2(3, 3, CARD_W - 6, CARD_H - 6), Color.WHITE, false, 5.0)
 	if Save.owns(category, i):   # a tick
-		b.draw_line(Vector2(CARD_W - 44, 22), Vector2(CARD_W - 34, 32), Color(0.4, 1.0, 0.5), 6.0)
-		b.draw_line(Vector2(CARD_W - 34, 32), Vector2(CARD_W - 16, 10), Color(0.4, 1.0, 0.5), 6.0)
-	elif i != 0:   # a padlock-ish dot for items not owned yet
-		b.draw_circle(Vector2(CARD_W - 28, 24), 8.0, Color(0.1, 0.1, 0.15, 0.8))
+		Icons.draw(b, "check", Vector2(CARD_W - 30, 28), 18.0)
+	elif i != 0:   # a padlock for items not owned yet
+		Icons.draw(b, "lock", Vector2(CARD_W - 30, 28), 16.0)
 
 ## Pre-warm: show item n of the whole catalogue, so every shape is drawn once at boot.
 func prewarm_show(n: int) -> void:

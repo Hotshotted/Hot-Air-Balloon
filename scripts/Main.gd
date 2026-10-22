@@ -196,7 +196,7 @@ func _refresh_menu() -> void:
 	var id := selected
 	var st := Save.stars_of(id)
 	var open := Save.flight_unlocked(id)
-	var info := "Locked: complete the Flight before it." if not open else "* Finish all %d legs\n* Finish with %d propane or more\n* Collect %d of %d coins\nbest score %s     coins %s" % [
+	var info := "Locked: complete the Flight before it." if not open else "Finish all %d legs\nFinish with %d propane or more\nCollect %d of %d coins\nbest score %s     coins %s" % [
 		int(Tuning.legs_per_flight), int(Flights.propane_target()), Flights.coin_target(), Flights.coin_total(),
 		Tuning.fmt(float(Save.best_score_of(id))), Tuning.fmt(float(Save.coins))]
 	var r := Flights.region_of(id)
@@ -306,6 +306,7 @@ func _begin_leg() -> void:
 	snap_picked = coins_picked
 	snap_score = score
 	hud.set_flight_hud(true)
+	hud.set_goal_icon(recipe.goal)
 	hud.hide_overlays()
 	hud.set_flight_title("%s   LEG %d/%d" % [_flight_name(flight_id), leg + 1, int(Tuning.legs_per_flight)])
 	hud.set_fuel(fuel / Tuning.propane_start)

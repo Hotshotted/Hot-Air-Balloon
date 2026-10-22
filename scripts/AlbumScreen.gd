@@ -15,6 +15,7 @@ func _ready() -> void:
 	size = Vector2(Lanes.W, Lanes.H)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(Ui.label("POSTCARD ALBUM", 70, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 40), Vector2(1000, 100)))
+	add_child(Ui.icon("album", 80, Vector2(110, 48)))
 	count_label = Ui.label("", 38, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 140), Vector2(1000, 56))
 	add_child(count_label)
 	for r in Regions.COUNT:
@@ -30,7 +31,7 @@ func _ready() -> void:
 		cap.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		add_child(cap)
 		captions.append(cap)
-	var back := Ui.button("BACK", 56, Vector2(190, 1640), Vector2(700, 120))
+	var back := Ui.button("BACK", 56, Vector2(190, 1640), Vector2(700, 120), Ui.COL_BTN, "back")
 	back.pressed.connect(func(): back_pressed.emit())
 	add_child(back)
 	zoom_p = Control.new()
@@ -45,11 +46,12 @@ func _ready() -> void:
 	zoom_view.position = Vector2(30, 420)
 	zoom_view.size = Vector2(1020, 700)
 	zoom_p.add_child(zoom_view)
-	var close := Ui.button("CLOSE", 56, Vector2(190, 1260), Vector2(700, 120))
+	var close := Ui.button("CLOSE", 56, Vector2(190, 1260), Vector2(700, 120), Ui.COL_BTN, "close")
 	close.pressed.connect(func(): zoom_p.visible = false)
 	zoom_p.add_child(close)
 	zoom_p.visible = false
 	add_child(zoom_p)
+	Ui.fit_safe(self)
 
 func _zoom(r: int) -> void:
 	var st := Save.postcard_of(r)

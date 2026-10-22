@@ -167,6 +167,10 @@ func check_everything_open(m: Node, sv: Node, what: String, cards: bool) -> void
 func lanes_of(m: Node, q: int) -> int:
 	return m.lanes.lane_of(m.balloon.position.y)
 
+## The y of tool button i's touch area (Hud.TOOL_RECTS).
+func HudS_rect_y(hud: Node, i: int) -> float:
+	return hud.TOOL_RECTS[i].position.y
+
 func tap(m: Node, pos: Vector2) -> void:
 	var ev := InputEventMouseButton.new()
 	ev.button_index = MOUSE_BUTTON_LEFT
@@ -2373,6 +2377,70 @@ func _run() -> void:
 		check(DebugFlags.stamp_enabled(), "?%s shows the stamp" % flag)
 	DebugFlags.parse([])
 	check(FileAccess.file_exists("res://assets/fonts/OFL.txt") and FileAccess.file_exists("res://assets/fonts/OFL-Nunito.txt") and FileAccess.file_exists("res://assets/fonts/Fredoka.ttf"), "the Fredoka and Nunito fonts ship with their OFL licences")
+
+	# ---- 7d. shared style: tokens, type, icons, buttons, safe areas ----
+	print("7d. shared style")
+	var contrast = func(a: Color, b: Color) -> float:
+		var la: float = a.srgb_to_linear().get_luminance() if false else (0.2126 * pow(a.r, 2.2) + 0.7152 * pow(a.g, 2.2) + 0.0722 * pow(a.b, 2.2))
+		var lb: float = 0.2126 * pow(b.r, 2.2) + 0.7152 * pow(b.g, 2.2) + 0.0722 * pow(b.b, 2.2)
+		return (maxf(la, lb) + 0.05) / (minf(la, lb) + 0.05)
+	check(contrast.call(Style.TEXT, Style.SURFACE_DARK) >= 4.5 and contrast.call(Style.TEXT_SOFT, Style.SURFACE_DARK) >= 4.5 and contrast.call(Style.ACCENT, Style.SURFACE_DARK) >= 4.5 and contrast.call(Style.TEXT_ON_LIGHT, Style.SURFACE_LIGHT) >= 4.5, "the text colours keep 4.5:1 contrast on the surfaces they sit on")
+	check(Style.R_S == 14 and Style.R_M == 26 and Style.R_L == 40 and Style.R_PILL == 60 and Style.T_FAST == 0.12 and Style.T_BASE == 0.3 and Style.T_SLOW == 0.5 and Style.PRIMARY == Color("3d8bff") and Style.ACCENT == Color("ffc933"), "the palette, radii and motion timings are the shared ones")
+	var lb7 := Ui.label("Hello", 30, HORIZONTAL_ALIGNMENT_LEFT, Vector2.ZERO, Vector2(100, 40))
+	var lb8 := Ui.label("120", 30, HORIZONTAL_ALIGNMENT_LEFT, Vector2.ZERO, Vector2(100, 40))
+	var lb9 := Ui.label("Hello", 84, HORIZONTAL_ALIGNMENT_LEFT, Vector2.ZERO, Vector2(100, 40))
+	check(lb7.get_theme_font("font") == Style.text() and lb8.get_theme_font("font") == Style.display() and lb9.get_theme_font("font") == Style.display() and lb7.get_theme_constant("outline_size") >= 4, "text is Nunito, numbers and big text Fredoka, always with an ink outline")
+	lb7.free()
+	lb8.free()
+	lb9.free()
+	var icon_bad := 0
+	for iid in Icons.IDS:
+		var host := IconView.new(iid, 64.0)
+		host.queue_free()
+		if not Icons.has_icon(iid):
+			icon_bad += 1
+	check(Icons.IDS.size() >= 40 and icon_bad == 0 and Icons.has_icon("sandbag") and Icons.has_icon("anchor") and Icons.has_icon("vent") and Icons.has_icon("goal_land") and Icons.has_icon("region_3") and Icons.has_icon("coin") and Icons.has_icon("propane"), "the icon set covers tools, goal types, regions and stats (%d icons)" % Icons.IDS.size())
+	var bare := 0
+	var emoji := 0
+	var stack: Array = [m.hud]
+	while not stack.is_empty():
+		var nd: Node = stack.pop_back()
+		for ch in nd.get_children():
+			stack.append(ch)
+		var txt := ""
+		if nd is Button:
+			txt = (nd as Button).text
+			var has_icon := false
+			for ch in nd.get_children():
+				has_icon = has_icon or ch is IconView
+			var is_node_btn: bool = m.hud.map.nodes.has(nd) or m.hud.shop.slots.has(nd)
+			if not has_icon and not is_node_btn:
+				bare += 1
+		elif nd is Label:
+			txt = (nd as Label).text
+		for ci2 in txt.length():
+			if txt.unicode_at(ci2) > 0x2000:
+				emoji += 1
+	check(bare == 0, "every button carries an icon (except the numbered Flights and the shop's item cards)")
+	check(emoji == 0 and not m.hud.menu_info.text.contains("*") and not m.hud.map.region_stars[0].text.contains("*"), "no emoji or placeholder symbols in any text")
+	m.start_flight(0)
+	check(m.hud.goal_icon.id == "goal_climb" and m.hud.tool_btns[0].get_child(0) is IconView and (m.hud.tool_btns[0].get_child(0) as IconView).id == "sandbag", "the goal line and the tool buttons carry their icons")
+	m.recipe = FlightsS.leg_recipe(7, 0, 1)
+	m.hud.set_goal_icon(3)
+	check(m.hud.goal_icon.id == "goal_storm", "the goal icon follows the goal type")
+	# safe areas: a 90 px notch and a 50 px home bar move the pinned things in and shrink the full screens
+	var lvl_y0: float = m.hud.level_label.position.y
+	var tool_y0: float = m.hud.tool_btns[0].position.y
+	Style.set_safe(90.0, 50.0)
+	m.hud._place_safe()
+	check(is_equal_approx(m.hud.level_label.position.y, lvl_y0 + 90.0) and is_equal_approx(m.hud.tool_btns[0].position.y, tool_y0 - 50.0) and is_equal_approx(HudS_rect_y(m.hud, 0), tool_y0 - 50.0), "safe areas: the top readouts move down by the notch, the tool buttons (and their touch areas) up by the home bar")
+	check(m.hud.map.scale.y < 1.0 and m.hud.map.position.y >= 90.0 and m.hud.shop.scale.y < 1.0 and m.hud.album.position.y >= 90.0, "...and the map, shop and album fit inside the safe area")
+	Style.set_safe(0.0, 0.0)
+	m.hud._place_safe()
+	check(is_equal_approx(m.hud.level_label.position.y, lvl_y0) and is_equal_approx(m.hud.tool_btns[0].position.y, tool_y0) and is_equal_approx(m.hud.map.scale.y, 1.0), "...and back when there is no inset")
+	var style_doc := FileAccess.get_file_as_string("res://docs/style.md")
+	check(style_doc.contains("## Palette") and style_doc.contains("## Typography") and style_doc.contains("## Icons") and style_doc.contains("## Motion") and style_doc.contains("## Safe areas") and style_doc.contains("## Deviations"), "docs/style.md documents the system and its deviations")
+	m.start_flight(0)
 
 	# ---- 8. restart in place ----
 	print("8. restart in place")

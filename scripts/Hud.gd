@@ -61,6 +61,14 @@ var air_label: Label
 var goal_label: Label
 var hint_label: Label
 var tool_btns: Array[Button] = []
+var propane_icon: IconView
+var goal_icon: IconView
+var prog_icons: Array[IconView] = []
+var menu_region_icon: IconView
+var menu_star_icons: Array[IconView] = []
+var _g_track: StyleBoxFlat
+var _g_fill := {}
+var _g_sheen: StyleBoxFlat
 var _hint_left := 0.0
 var _goal_cache := ""
 var map: MapScreen
@@ -130,7 +138,7 @@ var _frames_win := 0
 var _prof_text := ""
 ## Where the three tool buttons are (below the ground line). Touches are handled by Main (so a second finger works
 ## while the first holds the burner); the buttons themselves are only drawn.
-const TOOL_RECTS := [Rect2(30, 1742, 320, 110), Rect2(380, 1742, 320, 110), Rect2(730, 1742, 320, 110)]
+static var TOOL_RECTS := [Rect2(30, 1742, 320, 110), Rect2(380, 1742, 320, 110), Rect2(730, 1742, 320, 110)]
 const TOOL_NAMES := ["SANDBAG", "ANCHOR", "QUICK VENT"]
 const GRAPH_N := 120
 const GRAPH_MAX_MS := 50.0
@@ -148,27 +156,39 @@ func _ready() -> void:
 	stamp_label.text = "%s  %s%s" % [BuildInfo.COMMIT, BuildInfo.TIME, ("  " + flags) if flags != "" else ""]
 	for l in [level_label, score_label, coins_label, stamp_label]:
 		add_child(l)
+	_g_track = Style.box(Color(Style.INK, 0.85), Color(1, 1, 1, 0.3), 17, 3, false)
+	for k in ["ok", "mid", "low_a", "low_b"]:
+		var col: Color = {"ok": Style.SUCCESS, "mid": Style.WARNING, "low_a": Style.DANGER, "low_b": Style.WARNING}[k]
+		_g_fill[k] = Style.box(col, col.lightened(0.25), 14, 2, false)
+	_g_sheen = Style.sheen(6, 0.3)
+	propane_icon = Ui.icon("propane", 44, Vector2(28, 109))
+	add_child(propane_icon)
 	gauge = Control.new()
-	gauge.position = Vector2(30, 120)
-	gauge.size = Vector2(1020, 34)
+	gauge.position = Vector2(84, 114)
+	gauge.size = Vector2(966, 34)
 	gauge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	gauge.draw.connect(_draw_gauge)
 	add_child(gauge)
 	prog = Control.new()
-	prog.position = Vector2(30, 164)
+	prog.position = Vector2(30, 154)
 	prog.size = Vector2(1020, 50)
 	prog.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	prog.draw.connect(_draw_prog)
 	add_child(prog)
 	for i in 3:
-		var l := Ui.label("", 28, HORIZONTAL_ALIGNMENT_LEFT, Vector2(36.0 + 345.0 * float(i), 6), Vector2(300, 40))
+		var pi := Ui.icon(["legs", "propane", "coin"][i], 32, Vector2(46.0 + 345.0 * float(i), 9))
+		prog.add_child(pi)
+		prog_icons.append(pi)
+		var l := Ui.label("", 28, HORIZONTAL_ALIGNMENT_LEFT, Vector2(86.0 + 345.0 * float(i), 6), Vector2(255, 40))
 		prog.add_child(l)
 		prog_labels.append(l)
-	air_label = Ui.label("", 26, HORIZONTAL_ALIGNMENT_RIGHT, Vector2(560, 214), Vector2(490, 34))
+	air_label = Ui.label("", 24, HORIZONTAL_ALIGNMENT_RIGHT, Vector2(560, 202), Vector2(490, 34))
 	air_label.add_theme_color_override("font_color", Color(0.75, 0.85, 1.0))
 	air_label.visible = false
 	add_child(air_label)
-	goal_label = Ui.label("", 26, HORIZONTAL_ALIGNMENT_LEFT, Vector2(30, 214), Vector2(700, 34))
+	goal_icon = Ui.icon("goal_climb", 30, Vector2(30, 203))
+	add_child(goal_icon)
+	goal_label = Ui.label("", 24, HORIZONTAL_ALIGNMENT_LEFT, Vector2(70, 202), Vector2(680, 34))
 	goal_label.add_theme_color_override("font_color", Color(1.0, 0.95, 0.6))
 	add_child(goal_label)
 	hint_label = Ui.label("", 40, HORIZONTAL_ALIGNMENT_CENTER, Vector2(60, 1010), Vector2(960, 220))
@@ -176,7 +196,7 @@ func _ready() -> void:
 	hint_label.visible = false
 	add_child(hint_label)
 	for i in 3:
-		var tb := Ui.button(TOOL_NAMES[i], 36, TOOL_RECTS[i].position, TOOL_RECTS[i].size, [Color(0.75, 0.55, 0.25), Color(0.85, 0.6, 0.2), Color(0.35, 0.6, 0.85)][i])
+		var tb := Ui.button(TOOL_NAMES[i], 28, TOOL_RECTS[i].position, TOOL_RECTS[i].size, Ui.COL_BTN, ["sandbag", "anchor", "vent"][i])
 		tb.mouse_filter = Control.MOUSE_FILTER_IGNORE   # (drawn only: Main handles the touches)
 		tb.visible = false
 		add_child(tb)
@@ -201,7 +221,7 @@ func _ready() -> void:
 	_build_dead()
 	_build_result()
 	_build_card()
-	boost_btn = Ui.button("+50% PROPANE  (AD)", 44, Vector2(240, 1420), Vector2(600, 110), Color(0.6, 0.35, 0.85))
+	boost_btn = Ui.button("+50% PROPANE  (AD)", 40, Vector2(240, 1420), Vector2(600, 110), Color(0.6, 0.35, 0.85), "ad")
 	boost_btn.visible = false
 	boost_btn.pressed.connect(func(): boost_pressed.emit())
 	add_child(boost_btn)
@@ -227,14 +247,30 @@ func _ready() -> void:
 		_graph.draw.connect(_draw_graph)
 		add_child(_graph)
 		Lanes.prof_on = true
+	apply_safe_areas()
 	hide_overlays()
+
+## Read the device's safe area and move everything pinned to the top / bottom edge in by it (full-screen backgrounds and the
+## map / album / shop screens, which fit themselves, are left alone). Tool-button touch rects follow their buttons.
+func apply_safe_areas() -> void:
+	Style.detect_safe(Vector2(Lanes.W, Lanes.H))
+	_place_safe()
+
+func _place_safe() -> void:
+	Ui.apply_safe(self)
+	for i in 3:
+		TOOL_RECTS[i] = Rect2(tool_btns[i].position, tool_btns[i].size)
+	for scr in [map, album, shop]:
+		Ui.fit_safe(scr)
+	for p in [menu_p, dead_p, result_p, card_p, ad_p]:
+		Ui.apply_safe(p)
 
 func _panel() -> Control:
 	var p := Control.new()
 	p.size = Vector2(Lanes.W, Lanes.H)
 	p.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var bg := ColorRect.new()
-	bg.color = Color(0.05, 0.08, 0.15, 0.72)
+	bg.color = Color(Style.SCRIM, 0.8)
 	bg.size = p.size
 	bg.mouse_filter = Control.MOUSE_FILTER_STOP
 	p.add_child(bg)
@@ -243,6 +279,9 @@ func _panel() -> Control:
 
 func _build_menu() -> void:
 	menu_p = _panel()
+	menu_p.add_child(Ui.card(Vector2(50, 150), Vector2(980, 1330)))
+	menu_region_icon = Ui.icon("region_0", 120, Vector2(80, 215))
+	menu_p.add_child(menu_region_icon)
 	menu_title = Ui.label("", 110, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 200), Vector2(1000, 150))
 	menu_p.add_child(menu_title)
 	menu_blurb = Ui.label("", 40, HORIZONTAL_ALIGNMENT_CENTER, Vector2(90, 350), Vector2(900, 60))
@@ -255,13 +294,17 @@ func _build_menu() -> void:
 	menu_stars.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	menu_stars.draw.connect(func(): _draw_three(menu_stars, menu_lit, 40.0, 140.0, 40.0))
 	menu_p.add_child(menu_stars)
-	menu_info = Ui.label("", 38, HORIZONTAL_ALIGNMENT_CENTER, Vector2(90, 690), Vector2(900, 330))
+	for k in 3:   # the three star conditions: a star icon at the left of each line
+		var si := Ui.icon("star", 44, Vector2(170, 692.0 + 56.0 * float(k)))
+		menu_p.add_child(si)
+		menu_star_icons.append(si)
+	menu_info = Ui.label("", 38, HORIZONTAL_ALIGNMENT_LEFT, Vector2(230, 690), Vector2(780, 330))
 	menu_info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	menu_p.add_child(menu_info)
-	prev_btn = Ui.button("<", 70, Vector2(70, 470), Vector2(120, 120))
-	next_btn = Ui.button(">", 70, Vector2(890, 470), Vector2(120, 120))
-	fly_btn = Ui.button("FLY", 84, Vector2(190, 1100), Vector2(700, 160), Color(0.95, 0.5, 0.15))
-	menu_back = Ui.button("MAP", 56, Vector2(190, 1300), Vector2(700, 120))
+	prev_btn = Ui.ghost_button("back", Vector2(70, 470), 120.0)
+	next_btn = Ui.ghost_button("next", Vector2(890, 470), 120.0)
+	fly_btn = Ui.button("FLY", 84, Vector2(190, 1100), Vector2(700, 160), Color(0.95, 0.5, 0.15), "play")
+	menu_back = Ui.button("MAP", 56, Vector2(190, 1300), Vector2(700, 120), Ui.COL_BTN, "map")
 	prev_btn.pressed.connect(func(): prev_pressed.emit())
 	next_btn.pressed.connect(func(): next_pressed.emit())
 	fly_btn.pressed.connect(func(): fly_pressed.emit())
@@ -271,7 +314,8 @@ func _build_menu() -> void:
 
 func _build_ad() -> void:
 	ad_p = _panel()
-	ad_p.get_child(0).color = Color(0.08, 0.06, 0.14, 0.97)
+	ad_p.get_child(0).color = Color(Style.SCRIM, 0.97)
+	ad_p.add_child(Ui.card(Vector2(60, 330), Vector2(960, 1060)))
 	ad_title = Ui.label("AD PLAYING", 90, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 400), Vector2(1000, 130))
 	ad_p.add_child(ad_title)
 	ad_sub = Ui.label("", 56, HORIZONTAL_ALIGNMENT_CENTER, Vector2(60, 560), Vector2(960, 200))
@@ -279,10 +323,10 @@ func _build_ad() -> void:
 	ad_p.add_child(ad_sub)
 	ad_count = Ui.label("", 60, HORIZONTAL_ALIGNMENT_CENTER, Vector2(60, 780), Vector2(960, 100))
 	ad_p.add_child(ad_count)
-	ad_claim = Ui.button("CLAIM", 60, Vector2(190, 1000), Vector2(700, 140), Color(0.95, 0.5, 0.15))
+	ad_claim = Ui.button("CLAIM", 60, Vector2(190, 1000), Vector2(700, 140), Color(0.95, 0.5, 0.15), "check")
 	ad_claim.pressed.connect(func(): _end_ad(true))
 	ad_p.add_child(ad_claim)
-	ad_cancel = Ui.button("NO THANKS", 48, Vector2(190, 1190), Vector2(700, 110))
+	ad_cancel = Ui.button("NO THANKS", 48, Vector2(190, 1190), Vector2(700, 110), Ui.COL_BTN, "close")
 	ad_cancel.pressed.connect(func(): _end_ad(false))
 	ad_p.add_child(ad_cancel)
 
@@ -316,28 +360,30 @@ func _process(delta: float) -> void:
 
 func _build_card() -> void:
 	card_p = _panel()
+	card_p.add_child(Ui.card(Vector2(20, 170), Vector2(1040, 1290)))
 	card_header = Ui.label("NEW POSTCARD!", 84, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 220), Vector2(1000, 120))
 	card_p.add_child(card_header)
 	card_view = PostcardView.new()
 	card_view.position = Vector2(30, 400)
 	card_view.size = Vector2(1020, 700)
 	card_p.add_child(card_view)
-	var cont := Ui.button("CONTINUE", 60, Vector2(190, 1250), Vector2(700, 130), Color(0.95, 0.5, 0.15))
+	var cont := Ui.button("CONTINUE", 60, Vector2(190, 1250), Vector2(700, 130), Color(0.95, 0.5, 0.15), "check")
 	cont.pressed.connect(func(): card_p.visible = false)
 	card_p.add_child(cont)
 
 func _build_dead() -> void:
 	dead_p = _panel()
+	dead_p.add_child(Ui.card(Vector2(80, 330), Vector2(920, 1030)))
 	dead_header = Ui.label("FLIGHT FAILED", 84, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 380), Vector2(1000, 120))
 	dead_p.add_child(dead_header)
 	dead_text = Ui.label("", 50, HORIZONTAL_ALIGNMENT_CENTER, Vector2(60, 520), Vector2(960, 340))
 	dead_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	dead_p.add_child(dead_text)
-	retry_btn = Ui.button("RETRY THIS LEG  (AD)", 50, Vector2(190, 880), Vector2(700, 120), Color(0.6, 0.35, 0.85))
+	retry_btn = Ui.button("RETRY THIS LEG  (AD)", 44, Vector2(190, 880), Vector2(700, 120), Color(0.6, 0.35, 0.85), "ad")
 	retry_btn.pressed.connect(func(): retry_pressed.emit())
 	dead_p.add_child(retry_btn)
-	dead_again = Ui.button("FLY AGAIN", 70, Vector2(190, 1030), Vector2(700, 140), Color(0.95, 0.5, 0.15))
-	dead_menu = Ui.button("MAP", 60, Vector2(190, 1210), Vector2(700, 120))
+	dead_again = Ui.button("FLY AGAIN", 70, Vector2(190, 1030), Vector2(700, 140), Color(0.95, 0.5, 0.15), "restart")
+	dead_menu = Ui.button("MAP", 60, Vector2(190, 1210), Vector2(700, 120), Ui.COL_BTN, "map")
 	dead_again.pressed.connect(func(): again_pressed.emit())
 	dead_menu.pressed.connect(func(): menu_pressed.emit())
 	dead_p.add_child(dead_again)
@@ -345,6 +391,7 @@ func _build_dead() -> void:
 
 func _build_result() -> void:
 	result_p = _panel()
+	result_p.add_child(Ui.card(Vector2(40, 200), Vector2(1000, 1490)))
 	result_header = Ui.label("FLIGHT COMPLETE!", 80, HORIZONTAL_ALIGNMENT_CENTER, Vector2(40, 260), Vector2(1000, 120))
 	result_p.add_child(result_header)
 	result_icons = Control.new()
@@ -354,15 +401,15 @@ func _build_result() -> void:
 	result_icons.draw.connect(func(): _draw_rows(result_icons, result_lit, 55.0, 130.0))
 	result_p.add_child(result_icons)
 	for i in 3:
-		var l := Ui.label("", 42, HORIZONTAL_ALIGNMENT_LEFT, Vector2(190, 445.0 + 130.0 * float(i)), Vector2(800, 80))
+		var l := Ui.label("", 42, HORIZONTAL_ALIGNMENT_LEFT, Vector2(220, 445.0 + 130.0 * float(i)), Vector2(770, 80))
 		result_p.add_child(l)
 		result_rows.append(l)
 	result_summary = Ui.label("", 44, HORIZONTAL_ALIGNMENT_CENTER, Vector2(60, 850), Vector2(960, 440))
 	result_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	result_p.add_child(result_summary)
-	result_again = Ui.button("AGAIN", 56, Vector2(90, 1380), Vector2(440, 130))
-	result_next = Ui.button("NEXT", 56, Vector2(550, 1380), Vector2(440, 130), Color(0.95, 0.5, 0.15))
-	result_menu = Ui.button("MAP", 56, Vector2(190, 1540), Vector2(700, 120))
+	result_again = Ui.button("AGAIN", 56, Vector2(90, 1380), Vector2(440, 130), Ui.COL_BTN, "restart")
+	result_next = Ui.button("NEXT", 56, Vector2(550, 1380), Vector2(440, 130), Color(0.95, 0.5, 0.15), "next")
+	result_menu = Ui.button("MAP", 56, Vector2(190, 1540), Vector2(700, 120), Ui.COL_BTN, "map")
 	result_again.pressed.connect(func(): again_pressed.emit())
 	result_next.pressed.connect(func(): next_flight_pressed.emit())
 	result_menu.pressed.connect(func(): menu_pressed.emit())
@@ -372,35 +419,38 @@ func _build_result() -> void:
 ## Three stars side by side (lit = gold, otherwise dim).
 func _draw_three(ci: Control, lit: Array, r: float, gap: float, y: float) -> void:
 	for i in 3:
-		Ui.draw_star(ci, Vector2(60.0 + gap * float(i), y), r, Ui.COL_GOLD if lit[i] else Color(0.3, 0.33, 0.4))
+		Ui.draw_star(ci, Vector2(60.0 + gap * float(i), y), r, Style.ACCENT if lit[i] else Color(0.3, 0.33, 0.42))
 
 ## Three stars one under the other, one per row.
 func _draw_rows(ci: Control, lit: Array, r: float, gap: float) -> void:
 	for i in 3:
-		Ui.draw_star(ci, Vector2(55.0, 55.0 + gap * float(i)), r, Ui.COL_GOLD if lit[i] else Color(0.3, 0.33, 0.4))
+		Ui.draw_star(ci, Vector2(55.0, 55.0 + gap * float(i)), r, Style.ACCENT if lit[i] else Color(0.3, 0.33, 0.42))
 
 func _draw_gauge() -> void:
-	var r := Rect2(0, 0, 1020, 34)
-	gauge.draw_rect(r, Color(0.1, 0.12, 0.18, 0.85))
-	var col := Color(0.3, 0.9, 0.45)
+	var w := gauge.size.x
+	gauge.draw_style_box(_g_track, Rect2(0, 0, w, 34))
+	var key := "ok"
 	if fuel_frac < 0.5:
-		col = Color(1.0, 0.75, 0.2)
+		key = "mid"
 	if fuel_low:
-		col = Color(1.0, 0.25, 0.2) if int(_clock * 6.0) % 2 == 0 else Color(1.0, 0.6, 0.3)
-	gauge.draw_rect(Rect2(3, 3, 1014.0 * clampf(fuel_frac, 0.0, 1.0), 28), col)
-	var tx := 3.0 + 1014.0 * Tuning.star_propane_frac   # the second star's propane target
-	gauge.draw_line(Vector2(tx, -4), Vector2(tx, 38), Ui.COL_GOLD, 5.0)
-	gauge.draw_rect(r, Color.BLACK, false, 4.0)
+		key = "low_a" if int(_clock * 6.0) % 2 == 0 else "low_b"
+	var fw := (w - 6.0) * clampf(fuel_frac, 0.0, 1.0)
+	if fw > 10.0:
+		gauge.draw_style_box(_g_fill[key], Rect2(3, 3, fw, 28))
+		gauge.draw_style_box(_g_sheen, Rect2(8, 5, maxf(fw - 10.0, 0.0), 11))
+	var tx := 3.0 + (w - 6.0) * Tuning.star_propane_frac   # the second star's propane target
+	gauge.draw_line(Vector2(tx, -3), Vector2(tx, 37), Style.INK, 8.0)
+	gauge.draw_line(Vector2(tx, -3), Vector2(tx, 37), Style.ACCENT, 4.0)
 
 func _draw_prog() -> void:
 	for i in 3:
-		Ui.draw_star(prog, Vector2(18.0 + 345.0 * float(i), 25.0), 17.0, Ui.COL_GOLD if prog_lit[i] else Color(0.3, 0.33, 0.4))
+		Ui.draw_star(prog, Vector2(18.0 + 345.0 * float(i), 25.0), 17.0, Style.ACCENT if prog_lit[i] else Color(0.3, 0.33, 0.42))
 
 # ---- in-flight HUD ----
 
 ## Show or hide the in-flight readouts (flight name, score, gauge, star progress): only while flying.
 func set_flight_hud(on: bool) -> void:
-	for n in [level_label, score_label, coins_label, gauge, prog, goal_label]:
+	for n in [level_label, score_label, coins_label, gauge, prog, goal_label, goal_icon, propane_icon]:
 		n.visible = on
 	if not on:
 		air_label.visible = false
@@ -448,6 +498,9 @@ func set_progress(legs_done: int, legs: int, fuel: float, coins: int, coin_targe
 		prog.queue_redraw()
 
 ## The leg's goal line under the star progress ("Stars 2/4", "Mail on board: ..."); only re-texted when it changes.
+func set_goal_icon(goal: int) -> void:
+	goal_icon.set_icon(["goal_climb", "goal_stars", "goal_mail", "goal_storm", "goal_land"][clampi(goal, 0, 4)])
+
 func set_goal_text(text: String) -> void:
 	if text != _goal_cache:
 		_goal_cache = text
@@ -508,6 +561,8 @@ func show_menu(region_name: String, blurb: String, title: String, lit1: bool, li
 	next_btn.visible = not daily
 	menu_stars.visible = not daily
 	menu_title.text = region_name
+	var ri := Regions.NAMES.find(region_name)
+	menu_region_icon.set_icon("region_%d" % ri if ri >= 0 else "balloon")
 	menu_blurb.text = blurb
 	menu_name.text = title
 	menu_lit[0] = lit1
@@ -515,6 +570,9 @@ func show_menu(region_name: String, blurb: String, title: String, lit1: bool, li
 	menu_lit[2] = lit3
 	menu_stars.queue_redraw()
 	menu_info.text = info
+	for k in 3:
+		menu_star_icons[k].visible = info.begins_with("Finish")
+		menu_star_icons[k].set_icon("star")
 	prev_btn.disabled = not can_prev
 	next_btn.disabled = not can_next
 	fly_btn.disabled = not can_fly
@@ -584,6 +642,8 @@ func begin_prewarm() -> void:
 	menu_blurb.text = "gentle winds"
 	menu_name.text = "COUNTRYSIDE 6"
 	menu_info.text = "best 123,456"
+	for k in 3:
+		menu_star_icons[k].visible = true
 	menu_lit = [true, true, true]
 	result_lit = [true, true, true]
 	for r in result_rows:
