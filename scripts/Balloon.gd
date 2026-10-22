@@ -28,6 +28,7 @@ var basket_node: BalloonBasket
 var ropes: BalloonRopes
 var flame: BalloonFlame
 var streamers: BalloonStreamers
+var passenger: BalloonPassenger
 var _env_mat: ShaderMaterial
 var _flame_on := false
 var air := 0.0           # the temperature of the air in the envelope, 0..1: it follows `heat` up fast and cools slowly
@@ -37,6 +38,12 @@ var lean := 0.0          # the envelope's lean (rad) with the wind at its altitu
 var swing := 0.0         # the basket's swing (rad) on its ropes
 var wind_alt := 0.0      # the wind at the balloon's exact altitude (display)
 var _lean_v := 0.0
+var pass_look := 0.0     # the passenger's head turn -1..1
+var pass_cheer := 0.0    # 0..1 while cheering
+var pass_sad := 0.0      # 0..1 after a crash
+var cheer_left := 0.0
+var deflating := false   # a crash: the envelope empties and the balloon sinks (no collisions any more)
+var deflate_t := 0.0
 var _swing_v := 0.0
 var _vx_prev := 0.0
 var anchor_left := 0.0   # Anchor (Sahara): seconds of no sideways drift left
@@ -70,6 +77,9 @@ func _ready() -> void:
 	basket_node.balloon = self
 	basket_node.position = Vector2(0, BASKET_PIVOT)
 	add_child(basket_node)
+	passenger = BalloonPassenger.new()
+	passenger.balloon = self
+	basket_node.add_child(passenger)
 	streamers = BalloonStreamers.new()
 	streamers.balloon = self
 	basket_node.add_child(streamers)
@@ -107,6 +117,13 @@ func reset() -> void:
 	_lean_v = 0.0
 	_swing_v = 0.0
 	_vx_prev = 0.0
+	pass_look = 0.0
+	pass_cheer = 0.0
+	pass_sad = 0.0
+	cheer_left = 0.0
+	deflating = false
+	deflate_t = 0.0
+	env_node.scale = Vector2.ONE
 	_wind_lane = -2
 	_blend_t = 99.0
 	env_id = Save.equipped(Cosmetics.ENV)
@@ -115,7 +132,7 @@ func reset() -> void:
 	position = Vector2(Lanes.W * 0.5, floor_y())
 	rotation = 0.0
 	scale = Vector2(s(), s())
-	redraw_body()   # the envelope and basket: only now (a cosmetics change or a fresh leg)
+	redraw_body()   # the envelope, passenger and basket: only now (a cosmetics change or a fresh leg)
 	_update_rig(0.0)
 
 ## Teleport to height y at rest (tests).
@@ -182,6 +199,7 @@ func step(dt: float, hold: bool, fuel_left: bool, lift: float = 0.0, climb_mult:
 func redraw_body() -> void:
 	env_node.queue_redraw()
 	basket_node.queue_redraw()
+	passenger.queue_redraw()
 
 ## Pre-warm: show the balloon fully hot, burning, leaning and swinging so every shader and node draws once behind the splash.
 func warm_visuals() -> void:
@@ -219,6 +237,7 @@ func _update_rig(dt: float) -> void:
 		var sw_target := clampf(-ax * 0.00032, -0.7, 0.7)
 		_swing_v += ((sw_target - swing) * 36.0 - 2.0 * 0.35 * 6.0 * _swing_v) * h
 		swing = clampf(swing + _swing_v * h, -0.7, 0.7)
+	_update_passenger(dt)
 	_env_mat.set_shader_parameter("air", air)
 	env_node.rotation = lean
 	basket_node.rotation = swing
@@ -227,6 +246,57 @@ func _update_rig(dt: float) -> void:
 	if flame_power > 0.04 or _flame_on:
 		flame.queue_redraw()
 	_flame_on = flame_power > 0.04
+
+## The passenger: glances left and right now and then, cheers after a landing, droops after a crash.
+func _update_passenger(dt: float) -> void:
+	if pass_id == 0:
+		return
+	cheer_left = maxf(cheer_left - dt, 0.0)
+	var cheer_to := minf(cheer_left * 2.5, 1.0) if cheer_left > 0.0 else 0.0
+	pass_cheer = move_toward(pass_cheer, cheer_to, 8.0 * dt)
+	pass_sad = move_toward(pass_sad, 1.0 if deflating else 0.0, 2.0 * dt)
+	var glance := sin(_t * 0.9) * 0.6 + sin(_t * 2.3 + 1.0) * 0.4
+	pass_look = clampf(glance * (1.0 - pass_cheer) * (1.0 - pass_sad * 0.6) + (wind_alt / 400.0) * 0.4, -1.0, 1.0)
+	passenger.pose_changed()
+
+## The passenger cheers for `secs` seconds.
+func cheer(secs: float = 1.2) -> void:
+	cheer_left = secs
+
+## A crash: the envelope empties and flutters, the basket drops, the passenger droops. Main runs `deflate_step`.
+func start_deflate() -> void:
+	deflating = true
+	deflate_t = 0.0
+	burning = false
+	heat = 0.0
+	flame_power = 0.0
+	rise = minf(rise, 0.0)
+
+## Between legs and on the failed screen the balloon is not simulated: only its passenger / deflate animation runs.
+func idle_step(dt: float) -> void:
+	_t += dt
+	if deflating:
+		deflate_step(dt)
+	elif visible:
+		_update_passenger(dt)
+
+func deflate_step(dt: float) -> void:
+	if not deflating:
+		return
+	deflate_t += dt
+	var k := clampf(deflate_t / 0.9, 0.0, 1.0)
+	air = move_toward(air, 0.0, 3.0 * dt)
+	rise = maxf(rise - 520.0 * dt, -420.0)   # falling, faster and faster
+	position.y = minf(position.y - rise * dt, floor_y())
+	position.x += vx * 0.4 * dt
+	var flutter := sin(deflate_t * 16.0) * 0.16 * (1.0 - k)
+	env_node.scale = Vector2(1.0 + 0.12 * k + flutter, 1.0 - 0.5 * k)
+	env_node.rotation = lean + sin(deflate_t * 9.0) * 0.2 * (1.0 - k)
+	basket_node.rotation = swing + sin(deflate_t * 7.0 + 1.0) * 0.15 * (1.0 - k)
+	_env_mat.set_shader_parameter("air", air)
+	flame.queue_redraw()
+	_update_passenger(dt)
+	ropes.queue_redraw()
 
 ## Sideways speed: exactly the wind of the layer the balloon is in (0 on the ground and while anchored); blended
 ## over wind_blend_time only when the layer changes.

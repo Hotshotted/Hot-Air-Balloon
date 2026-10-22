@@ -24,6 +24,7 @@ const PARTS_PER_LANE := 8
 const CLOUDS_PER_LANE := 3     # drifting clouds per layer (they move at exactly the layer's wind)
 const BIRDS_PER_LANE := 2      # tiny faint far-off birds per layer (ditto)
 const FX_MAX := 24
+const RING_MAX := 8            # pooled expanding rings (pickups, handoffs, landings)
 const MAX_COINS := MAX_LANES
 const MAX_STARS := 5
 ## Precision Landing: the airship's deck (its top surface) and hull, and the range it drifts over.
@@ -113,6 +114,13 @@ var fx_vx := PackedFloat32Array()
 var fx_vy := PackedFloat32Array()
 var fx_life := PackedFloat32Array()
 var fx_col := PackedColorArray()
+var rg_x := PackedFloat32Array()
+var rg_y := PackedFloat32Array()
+var rg_age := PackedFloat32Array()       # seconds since it started; <0 = free
+var rg_life := PackedFloat32Array()
+var rg_max := PackedFloat32Array()       # final radius
+var rg_col := PackedColorArray()
+var _rg_next := 0
 var th_x := PackedFloat32Array()         # thermals (Sahara): columns of updraft
 var th_dx := PackedFloat32Array()
 var th_count := 0
@@ -124,6 +132,7 @@ var focus_lane := 0                      # the layer the balloon is in (sand haz
 var _fx_next := 0
 var last_hit_kind := 0
 var level := 1.0
+var daylight := 0.5                      # 0 dawn .. 0.5 day .. 1 dusk: the Flight's progress, tints the sky (set before setup())
 var rng := RandomNumberGenerator.new()
 var preview_balloon: Balloon     # set while the drift preview is on: LaneRender draws its predicted path and the hazards' ghosts
 var showcase := false            # pre-warm: every shape on screen at once
@@ -177,6 +186,13 @@ func _ready() -> void:
 	fx_vy.resize(FX_MAX)
 	fx_life.resize(FX_MAX)
 	fx_col.resize(FX_MAX)
+	rg_x.resize(RING_MAX)
+	rg_y.resize(RING_MAX)
+	rg_age.resize(RING_MAX)
+	rg_age.fill(-1.0)
+	rg_life.resize(RING_MAX)
+	rg_max.resize(RING_MAX)
+	rg_col.resize(RING_MAX)
 	_build_scenery()
 	render = LaneRender.new()
 	render.lanes = self
@@ -191,23 +207,13 @@ static func _pair(pts: Array) -> Array:
 
 # Scenery per region: peaks (with snow caps), trees, dunes, a sun, ground and a launch pad.
 func _build_scenery() -> void:
-	var peak_y := [1560.0, 1440.0, 1630.0, 1370.0]
 	for r in Regions.COUNT:
 		var list: Array = []
-		var py: float = peak_y[r]
 		var gy := GROUND_Y
-		_scn_add(list, [Vector2(-140, gy), Vector2(130, py), Vector2(400, gy)], Regions.PEAK_A[r])
-		_scn_add(list, [Vector2(220, gy), Vector2(560, py + 30.0), Vector2(900, gy)], Regions.PEAK_B[r])
-		_scn_add(list, [Vector2(690, gy), Vector2(950, py - 25.0), Vector2(1220, gy)], Regions.PEAK_A[r])
-		if Regions.SNOW[r].a > 0.5:
-			for pk in [Vector2(130, py), Vector2(560, py + 30.0), Vector2(950, py - 25.0)]:
-				var cap_h: float = (gy - pk.y) * 0.3
-				_scn_add(list, [pk, pk + Vector2(-cap_h * 0.62, cap_h), pk + Vector2(cap_h * 0.62, cap_h)], Regions.SNOW[r])
 		if r == 0 or r == 1:
 			for tx in [90.0, 210.0, 830.0, 990.0]:
 				_scn_add(list, [Vector2(tx - 26, gy - 10), Vector2(tx, gy - 84), Vector2(tx + 26, gy - 10)], Color(0.16, 0.5, 0.26) if r == 0 else Color(0.14, 0.38, 0.3))
 		if r == 2:
-			_scn_add(list, _octagon(Vector2(880, 1600), 70.0, 70.0), Color(1.0, 0.84, 0.3))
 			for cx in [160.0, 760.0]:   # cacti: a box with an arm
 				_scn_add(list, [Vector2(cx - 9, gy), Vector2(cx - 9, gy - 78), Vector2(cx + 9, gy - 78), Vector2(cx + 9, gy)], Color(0.3, 0.55, 0.3))
 				_scn_add(list, [Vector2(cx + 9, gy - 40), Vector2(cx + 30, gy - 40), Vector2(cx + 30, gy - 62), Vector2(cx + 20, gy - 62), Vector2(cx + 20, gy - 50), Vector2(cx + 9, gy - 50)], Color(0.3, 0.55, 0.3))
@@ -652,6 +658,11 @@ func update(dt: float) -> void:
 			fx_x[f] += fx_vx[f] * dt
 			fx_y[f] += fx_vy[f] * dt
 			fx_vy[f] += 600.0 * dt
+	for r in RING_MAX:
+		if rg_age[r] >= 0.0:
+			rg_age[r] += dt
+			if rg_age[r] >= rg_life[r]:
+				rg_age[r] = -1.0
 	if prof_on:
 		prof_us[0] += float(Time.get_ticks_usec() - t_prof)
 	render.update(dt)
@@ -707,6 +718,7 @@ func collect(balloon: Balloon) -> int:
 				pk_on[i] = 0
 				got += 1
 				burst(Vector2(pk_x[i], pk_y[i]), C_TANK, 14, 320.0)
+				ring(Vector2(pk_x[i], pk_y[i]), C_TANK, 110.0, 0.5)
 				break
 	return got
 
@@ -721,6 +733,7 @@ func collect_coins(balloon: Balloon) -> int:
 				cn_on[i] = 0
 				got += 1
 				burst(Vector2(cn_x[i], cn_y[i]), Color(1.0, 0.85, 0.2), 12, 300.0)
+				ring(Vector2(cn_x[i], cn_y[i]), Color(1.0, 0.85, 0.2), 70.0, 0.35)
 				break
 	return got
 
@@ -765,6 +778,8 @@ func collect_stars(balloon: Balloon) -> int:
 				gs_on[q] = 0
 				got += 1
 				burst(Vector2(gs_x[q], gs_y[q]), Color(0.6, 0.95, 1.0), 14, 320.0)
+				ring(Vector2(gs_x[q], gs_y[q]), Color(0.6, 0.95, 1.0), 130.0, 0.55)
+				ring(Vector2(gs_x[q], gs_y[q]), Color(1, 1, 1), 80.0, 0.35)
 				break
 	return got
 
@@ -827,6 +842,18 @@ func burst(p: Vector2, color: Color, n: int, speed: float) -> void:
 		fx_life[f] = rng.randf_range(0.5, 0.9)
 		fx_col[f] = color
 
+## A pooled ring that swells to `radius` and fades over `life` seconds.
+func ring(p: Vector2, color: Color, radius: float, life: float) -> void:
+	var r := _rg_next
+	_rg_next = (_rg_next + 1) % RING_MAX
+	rg_x[r] = p.x
+	rg_y[r] = p.y
+	rg_age[r] = 0.0
+	rg_life[r] = life
+	rg_max[r] = radius
+	rg_col[r] = color
+
 func clear_fx() -> void:
 	for f in FX_MAX:
 		fx_life[f] = 0.0
+	rg_age.fill(-1.0)

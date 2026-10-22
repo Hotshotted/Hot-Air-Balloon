@@ -539,7 +539,7 @@ func _run() -> void:
 		m.sim(1.0 / 60.0)
 		kinds_hit[k] = m.screen == MainS.SCREEN_DEAD and m.last_reason == "Crashed into %s" % LanesS.KIND_NAME[k]
 	check(kinds_hit.values().all(func(v): return v) and kinds_hit.size() == 8, "touching any of the 8 hazard kinds ends the attempt with its name")
-	check(not m.balloon.visible and m.hud.dead_p.visible and m.hud.dead_text.text.contains("Crashed into"), "a crash ends the Flight and shows the failed screen")
+	check(m.balloon.deflating and m.hud.dead_p.visible and m.hud.dead_text.text.contains("Crashed into"), "a crash ends the Flight and shows the failed screen")
 	var spark := 0
 	for f in LanesS.FX_MAX:
 		if m.lanes.fx_life[f] > 0.0:
@@ -2589,6 +2589,69 @@ func _run() -> void:
 	m.sfx.set_music(2)
 	check(m.sfx.music_mode_db < mo_m1 and sv.sound_volume() == 1.0 and is_equal_approx(sv.music_volume(), 0.7), "music: menus louder than flights, saved volumes default to 100% / 70%")
 	m.start_flight(0)
+
+	# ---- 7f. in-game polish: balloon models, passengers, backdrops, hazards, feedback ----
+	print("7f. in-game polish")
+	DebugFlags.parse([])
+	sv.reset_all()
+	m.start_flight(0)
+	m.set_process(true)
+	var pl_b: Node = m.balloon
+	pl_b.pass_id = 1
+	check(pl_b.passenger != null and pl_b.passenger.show_behind_parent and pl_b.pass_id == 1, "the passenger is its own node, drawn behind the basket front")
+	var pl_looks := {}
+	for i in 240:
+		pl_b.idle_step(1.0 / 30.0)
+		pl_looks[int(roundf(pl_b.pass_look * 4.0))] = true
+	check(pl_looks.size() >= 3, "the passenger looks around (%d head poses)" % pl_looks.size())
+	pl_b.cheer(1.0)
+	for i in 12:
+		pl_b.idle_step(1.0 / 30.0)
+	check(pl_b.pass_cheer > 0.8, "...and cheers when told to (%.2f)" % pl_b.pass_cheer)
+	# the backdrop: three parallax ridges per region, drawn once per leg, drifting with the wind, a tint by time of day
+	var pl_px = m.lanes.render.parallax
+	for r in 4:
+		m.lanes.daylight = 0.0
+		m.lanes.setup(3.0, false, 40 + r, r)
+		await process_frame
+	check(pl_px.get_child_count() == 3, "three parallax ridge layers per region")
+	var pl_draws: int = pl_px.draws
+	var pl_x0: float = pl_px.get_child(2).position.x
+	m.lanes.lane_wind[0] = 200.0
+	m.lanes.focus_lane = 0
+	for i in 60:
+		m.lanes.render.update(1.0 / 60.0)
+	check(pl_px.get_child(2).position.x != pl_x0 and pl_px.draws == pl_draws, "the ridges drift without being redrawn")
+	check(pl_px.get_child(0).position.x - pl_x0 != pl_px.get_child(2).position.x - pl_x0, "...the near layers faster than the far ones")
+	m.lanes.daylight = 0.0
+	m.lanes.setup(3.0, false, 50, 0)
+	var pl_dawn: Color = m.lanes.render._day_mat.get_shader_parameter("tint")
+	m.lanes.daylight = 0.5
+	m.lanes.setup(3.0, false, 50, 0)
+	var pl_noon: Color = m.lanes.render._day_mat.get_shader_parameter("tint")
+	m.lanes.daylight = 1.0
+	m.lanes.setup(3.0, false, 50, 0)
+	var pl_dusk: Color = m.lanes.render._day_mat.get_shader_parameter("tint")
+	check(pl_dawn.a > 0.15 and pl_noon.a < 0.01 and pl_dusk.a > 0.15 and pl_dawn.r > pl_dusk.r, "dawn is a warm wash, midday clear, dusk a violet one")
+	# feedback: pickups ring, a handoff rings and cheers, a crash deflates (and nothing allocates: the rings are pooled)
+	m.start_flight(0)
+	m.set_process(true)
+	m.lanes.clear_fx()
+	m.lanes.ring(Vector2(500, 900), Color.WHITE, 100.0, 0.4)
+	check(Array(m.lanes.rg_age).max() >= 0.0, "a ring effect starts")
+	for i in 40:
+		m.lanes.update(1.0 / 60.0)
+	check(Array(m.lanes.rg_age).max() < 0.0, "...and ends by itself (pooled, %d slots)" % m.lanes.rg_age.size())
+	m.balloon.position = Vector2(540, 800)
+	m.balloon.pass_id = 1
+	m._crash(0)
+	check(m.balloon.deflating and m.balloon.visible and m.screen == MainS.SCREEN_DEAD, "a crash deflates the balloon instead of making it vanish")
+	var pl_y0: float = m.balloon.position.y
+	for i in 60:
+		m.sim(1.0 / 60.0)
+	check(m.balloon.env_node.scale.y < 0.7 and m.balloon.position.y > pl_y0 and m.balloon.pass_sad > 0.5, "...the envelope empties (%.2f), the basket sinks and the passenger droops" % m.balloon.env_node.scale.y)
+	m.start_flight(0)
+	check(not m.balloon.deflating and is_equal_approx(m.balloon.env_node.scale.y, 1.0), "a new flight inflates it again")
 
 	# ---- 8. restart in place ----
 	print("8. restart in place")

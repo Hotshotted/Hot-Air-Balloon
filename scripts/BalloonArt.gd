@@ -17,6 +17,7 @@ static func shared() -> BalloonArt:
 var _round: Array
 var _pat: Array = []                 # per pattern: list of [poly, closed outline, colour slot 0-2]
 var _badge: Array
+var _seams: Array = []               # fabric panel seams of the round envelope (polylines)
 var _cat_head: Array
 var _cat_ear_l: Array
 var _cat_ear_r: Array
@@ -91,6 +92,12 @@ func _init() -> void:
 		env.append(Vector2(cos(a) * 42.0, -6.0 + sin(a) * 50.0))
 	env.append_array(PackedVector2Array([Vector2(34, 22), Vector2(16, 44), Vector2(-16, 44), Vector2(-34, 22)]))
 	_round = _pair(env)
+	for u in [-0.74, -0.42, 0.0, 0.42, 0.74]:   # panel seams run from the crown to the throat, bulging with the envelope
+		var seam := PackedVector2Array()
+		for k in 9:
+			var y := lerpf(_top_y(0.0) + 1.0, 43.0, float(k) / 8.0)
+			seam.append(Vector2(u * _half_width(y), y))
+		_seams.append(seam)
 	# Patterns (slot 0 = the base colour is drawn first by the caller, these go on top in slots 1 and 2).
 	for p in 7:
 		_pat.append([])
@@ -183,6 +190,10 @@ func draw_envelope(ci: CanvasItem, env: int, w: float) -> void:
 			if pat == 6:
 				ci.draw_colored_polygon(_badge[0], c2)
 				ci.draw_polyline(_badge[1], Color.BLACK, w * 0.6)
+			for sm in _seams:
+				ci.draw_polyline(sm, Color(0, 0, 0, 0.26), w * 0.32)
+			ci.draw_colored_polygon(_gore(24.0, 42.0), Color(0, 0, 0, 0.1))   # the shaded side
+			ci.draw_arc(Vector2(0, -6), 33.0, PI * 1.08, PI * 1.42, 8, Color(1, 1, 1, 0.45), w * 0.8)   # the sheen
 			ci.draw_polyline(_round[1], Color.BLACK, w)
 		1:   # cat head: ears, face, whiskers
 			_fill(ci, _cat_ear_l, c1, w)
@@ -227,11 +238,17 @@ func draw_basket(ci: CanvasItem, basket: int, pas: int, w: float) -> void:
 	ci.draw_rect(Rect2(-4, 52, 8, 6), Color(0.45, 0.47, 0.52))
 	ci.draw_rect(Rect2(-4, 52, 8, 6), Color.BLACK, false, w * 0.6)
 	if pas > 0:   # the passenger peeks over the rim, behind the basket's front
-		_passenger(ci, pas, w)
+		_passenger(ci, pas, w, Vector2.ZERO, 0.0, 0.0)
 	for part in _baskets[basket]:
 		ci.draw_colored_polygon(part[0], part[2])
 		ci.draw_polyline(part[1], Color.BLACK, w)
 	_basket_detail(ci, basket, w)
+
+## The passenger alone (the game balloon's animated passenger node): `look` -1..1 turns the head, `cheer` 0..1 throws
+## the paws up and bounces, `sad` 0..1 droops it (a crash).
+func draw_passenger(ci: CanvasItem, pas: int, w: float, look: float, cheer: float, sad: float) -> void:
+	if pas > 0:
+		_passenger(ci, pas, w, Vector2(look * 3.0, -cheer * 4.0 + sad * 5.0), cheer, sad)
 
 ## Draw the balloon WITHOUT its flame (env / basket / pas: catalogue indices): the map marker and the shop.
 func draw_body(ci: CanvasItem, env: int, basket: int, pas: int, w: float) -> void:
@@ -267,9 +284,15 @@ func draw(ci: CanvasItem, env: int, basket: int, pas: int, heat: float, t: float
 
 func _basket_detail(ci: CanvasItem, basket: int, w: float) -> void:
 	match basket:
-		0:   # wicker weave
-			ci.draw_line(Vector2(-13, 68), Vector2(13, 68), Color.BLACK, w * 0.4)
-			ci.draw_line(Vector2(-12, 76), Vector2(12, 76), Color.BLACK, w * 0.4)
+		0:   # wicker weave: rows of staggered dashes
+			for r in 5:
+				var wy := 64.0 + float(r) * 4.6
+				var half := lerpf(14.0, 11.0, float(r) / 4.0)
+				ci.draw_line(Vector2(-half, wy), Vector2(half, wy), Color(0, 0, 0, 0.4), w * 0.3)
+				for k in 4:
+					var wx := -half + (float(k) + (0.5 if r % 2 == 0 else 0.0)) * half * 0.5
+					ci.draw_line(Vector2(wx, wy), Vector2(wx, wy + 4.6), Color(0, 0, 0, 0.3), w * 0.28)
+			ci.draw_line(Vector2(-14, 61.5), Vector2(14, 61.5), Color(1, 1, 1, 0.35), w * 0.6)
 		1:   # crate planks and an X
 			ci.draw_line(Vector2(-15, 72), Vector2(15, 72), Color.BLACK, w * 0.5)
 			ci.draw_line(Vector2(-15, 60), Vector2(15, 84), Color.BLACK, w * 0.4)
@@ -280,15 +303,17 @@ func _basket_detail(ci: CanvasItem, basket: int, w: float) -> void:
 			ci.draw_circle(Vector2(-7, 71), 3.5, Color(0.4, 0.7, 1.0))
 			ci.draw_circle(Vector2(7, 71), 3.5, Color(0.4, 0.7, 1.0))
 			ci.draw_line(Vector2(-15, 64), Vector2(15, 64), Color(0.9, 0.2, 0.2), w * 0.8)
-		4:   # barrel hoops
+		4:   # barrel staves and hoops
+			for k in [-6.0, 0.0, 6.0]:
+				ci.draw_line(Vector2(k, 62), Vector2(k, 85), Color(0, 0, 0, 0.25), w * 0.3)
 			ci.draw_line(Vector2(-13, 66), Vector2(13, 66), Color(0.3, 0.3, 0.35), w * 0.8)
 			ci.draw_line(Vector2(-15, 78), Vector2(15, 78), Color(0.3, 0.3, 0.35), w * 0.8)
 		5:   # cabin window and door
 			ci.draw_rect(Rect2(-10, 72, 7, 7), Color(0.75, 0.92, 1.0))
 			ci.draw_rect(Rect2(3, 74, 8, 12), Color(0.45, 0.28, 0.15))
 
-func _passenger(ci: CanvasItem, pas: int, w: float) -> void:
-	var c := HEAD
+func _passenger(ci: CanvasItem, pas: int, w: float, off: Vector2, cheer: float, sad: float) -> void:
+	var c := HEAD + off
 	match pas:
 		1:   # cat
 			_p3(ci, c + Vector2(-8, -4), c + Vector2(-6, -15), c + Vector2(-1, -7), Color(0.6, 0.6, 0.65))
@@ -331,3 +356,13 @@ func _passenger(ci: CanvasItem, pas: int, w: float) -> void:
 			ci.draw_circle(c + Vector2(3.5, -1.5), 1.4, Color.WHITE)
 			ci.draw_circle(c + Vector2(0, 4), 1.8, Color.BLACK)
 	ci.draw_arc(c, 9.0, 0.0, TAU, 14, Color.BLACK, w * 0.5)
+	if cheer > 0.05:   # both paws up over the rim
+		var pc := Color(0.95, 0.85, 0.7)
+		for sx in [-1.0, 1.0]:
+			var base := Vector2(HEAD.x + sx * 12.0, 58.0)
+			var tip := Vector2(HEAD.x + sx * (14.0 + 3.0 * sin(cheer * 40.0)), 58.0 - 14.0 * cheer)
+			ci.draw_line(base, tip, Color.BLACK, w * 1.3)
+			ci.draw_line(base, tip, pc, w * 0.7)
+			ci.draw_circle(tip, 2.6, pc)
+	if sad > 0.05:   # a tear
+		ci.draw_circle(c + Vector2(5.0, 4.0 + sad * 4.0), 1.8, Color(0.4, 0.75, 1.0))

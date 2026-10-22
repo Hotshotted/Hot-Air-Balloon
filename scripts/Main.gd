@@ -95,6 +95,7 @@ func _ready() -> void:
 	hud.next_flight_pressed.connect(func(): _proceed(_on_next_flight))
 	selected = Save.suggested_flight()
 	_set_flight(selected)
+	lanes.daylight = 0.0
 	lanes.setup(_eff(0), false, Flights.leg_seed(flight_seed, 0), flight_region)
 	balloon.reset()
 	fuel = Tuning.propane_start
@@ -209,6 +210,7 @@ func _show_menu() -> void:
 	lanes.visible = true
 	balloon.visible = true
 	_set_flight(selected)
+	lanes.daylight = 0.0
 	lanes.setup(_eff(0), false, Flights.leg_seed(flight_seed, 0), flight_region)
 	balloon.reset()
 	hud.set_flight_title("")
@@ -340,6 +342,7 @@ func start_flight(id: int) -> void:
 
 func _begin_leg() -> void:
 	recipe = Flights.leg_recipe(flight_id, leg, Flights.leg_seed(flight_seed, leg))
+	lanes.daylight = float(leg) / maxf(Tuning.legs_per_flight - 1.0, 1.0)
 	lanes.setup(_eff(leg), false, Flights.leg_seed(flight_seed, leg), flight_region, recipe)
 	lanes.visible = true
 	_goal_key = -1
@@ -394,9 +397,11 @@ func _fail(reason: String) -> void:
 	hud.show_dead("Leg %d of %d\n%s\nCoins kept: %d" % [leg + 1, int(Tuning.legs_per_flight), reason, flight_coins], can_retry)
 
 func _crash(kind: int) -> void:
-	lanes.burst(balloon.position, Color(1.0, 0.45, 0.15), 18, 420.0)
-	lanes.burst(balloon.position, Color(1.0, 0.9, 0.4), 10, 300.0)
-	balloon.visible = false
+	lanes.burst(balloon.position, Color(1.0, 0.45, 0.15), 10, 360.0)
+	lanes.burst(balloon.position, Color(0.75, 0.75, 0.8), 8, 200.0)   # a puff of smoke
+	lanes.ring(balloon.position, Color(1.0, 0.7, 0.3), 120.0, 0.45)
+	balloon.start_deflate()
+	sfx.play_deflate()
 	_fail("Crashed into %s" % Lanes.KIND_NAME[kind])
 
 func _clear_leg() -> void:
@@ -406,8 +411,12 @@ func _clear_leg() -> void:
 	flight_coins += roundi(Tuning.leg_coins)
 	hud.set_score(score)
 	hud.set_flight_coins(flight_coins)
+	sfx.play("cheer")
 	lanes.burst(balloon.position, Color(1.0, 0.85, 0.3), 14, 380.0)
 	lanes.burst(balloon.position, Color(0.4, 0.9, 1.0), 14, 380.0)
+	lanes.ring(balloon.position + Vector2(0, 90.0 * balloon.s()), Color(1, 1, 1), 190.0, 0.6)
+	lanes.ring(balloon.position + Vector2(0, 90.0 * balloon.s()), Color(1.0, 0.85, 0.3), 120.0, 0.45)
+	balloon.cheer(1.6)
 	fuel = minf(fuel + Tuning.leg_refill, Tuning.propane_start)
 	leg += 1
 	if leg >= int(Tuning.legs_per_flight):
@@ -542,12 +551,14 @@ func sim(dt: float) -> void:
 		SCREEN_CLEAR:
 			lanes.preview_balloon = null
 			lanes.update(dt)
+			balloon.idle_step(dt)
 			clear_left -= dt
 			if clear_left <= 0.0:
 				_begin_leg()
 		_:
 			lanes.preview_balloon = null
 			lanes.update(dt)
+			balloon.idle_step(dt)
 
 func _play(dt: float) -> void:
 	lanes.focus_lane = lanes.lane_of(balloon.position.y)
@@ -577,8 +588,10 @@ func _play(dt: float) -> void:
 	var got := lanes.collect(balloon)
 	if got > 0:
 		fuel = minf(fuel + Tuning.propane_refill * float(got), Tuning.propane_start)
+		sfx.play("pickup")
 	var cn := lanes.collect_coins(balloon)
 	if cn > 0:
+		sfx.play("coin")
 		coins_picked += cn
 		flight_coins += cn * roundi(Tuning.coin_value)
 		hud.set_flight_coins(flight_coins)
@@ -604,12 +617,24 @@ func _play(dt: float) -> void:
 	elif fuel <= 0.0 and balloon.on_ground:
 		_fail("Out of propane: stranded on the ground")
 
+## A mooring handoff: a ring on the platform, sparks, a bell, a cheer from the passenger.
+func _handoff(which: int) -> void:
+	var dp := lanes.dock_pos(which)
+	var col := Color(0.3, 0.8, 0.4) if which == 0 else Color(0.9, 0.3, 0.3)
+	lanes.ring(dp, col, 150.0, 0.6)
+	lanes.ring(dp, Color(1, 1, 1), 90.0, 0.4)
+	lanes.burst(dp, col, 10, 260.0)
+	sfx.play("unlock" if which == 1 else "pickup")
+	balloon.cheer(1.0)
+
 ## Goal progress: collect stars, pick up and deliver the mail; and the goal line of the HUD.
 func _update_goal() -> void:
 	match recipe.goal:
 		Flights.STARS:
 			var got := lanes.collect_stars(balloon)
 			if got > 0:
+				sfx.play("star")
+				balloon.cheer(0.7)
 				hud.show_banner("STAR!  %d LEFT" % lanes.stars_left() if lanes.stars_left() > 0 else "ALL STARS! GO UP!", 0.8)
 			var key := lanes.stars_left()
 			if key != _goal_key:
@@ -618,9 +643,11 @@ func _update_goal() -> void:
 		Flights.DELIVERY:
 			if lanes.mail_state == 0 and lanes.at_dock(balloon, 0):
 				lanes.mail_state = 1
+				_handoff(0)
 				hud.show_banner("MAIL PICKED UP!", 1.0)
 			elif lanes.mail_state == 1 and lanes.at_dock(balloon, 1):
 				lanes.mail_state = 2
+				_handoff(1)
 				hud.show_banner("DELIVERED! GO UP!", 1.0)
 			if lanes.mail_state != _goal_key:
 				_goal_key = lanes.mail_state

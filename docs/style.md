@@ -102,3 +102,15 @@ otherwise.
   interface (HUD, panels, buttons, icons, loading) is the shared system.
 * **The app icon and splash image are drawn for this game** (a balloon rather than an aircraft); the mark, background and rules
   are shared.
+
+## In-game scenery and feedback (Phase 4)
+
+- **Backdrops** are three parallax ridge layers per region (far, middle, near), each one outlined polygon drawn once per leg:
+  Countryside rolling hills with field furrows, Alps jagged peaks with snow, Sahara lopsided dunes with a lit crest,
+  Himalayas tall ridges in violet haze. Far layers are tinted toward the sky and have a fainter outline; the near layer
+  keeps the full black outline. They drift opposite to the wind of the balloon's layer at 5 %, 11 % and 20 % of its speed.
+- **Time of day**: the five legs of a Flight run dawn (warm wash) -> midday (clear) -> dusk (violet wash), one full-screen
+  gradient over the scenery that is strongest at the horizon. It never covers hazards, pickups or the HUD.
+- **Hazards** are the loudest things in the sky: black outlines, saturated fills (a slight saturation boost in the shader).
+- **Feedback**: pickups, handoffs and landings burst squares *and* an expanding outlined ring; the passenger cheers; a crash
+  empties the envelope (squash, flutter), drops the basket and droops the passenger instead of vanishing.

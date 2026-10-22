@@ -12,6 +12,10 @@ extends Node2D
 
 var lanes: Lanes
 var backdrop: Backdrop
+var parallax: ParallaxBack
+var front: BackdropFront
+var _day: ColorRect
+var _day_mat: ShaderMaterial
 var fx: FxLayer
 var _wind_mat: ShaderMaterial
 var _haze: ColorRect
@@ -78,6 +82,21 @@ func _ready() -> void:
 	backdrop = Backdrop.new()
 	backdrop.lanes = lanes
 	add_child(backdrop)
+	parallax = ParallaxBack.new()
+	parallax.lanes = lanes
+	add_child(parallax)
+	front = BackdropFront.new()
+	front.lanes = lanes
+	add_child(front)
+	backdrop.parallax = parallax
+	backdrop.front = front
+	_day_mat = ShaderMaterial.new()
+	_day_mat.shader = load("res://shaders/daylight.gdshader")
+	_day = ColorRect.new()
+	_day.size = Vector2(Lanes.W, Lanes.H)
+	_day.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_day.material = _day_mat
+	add_child(_day)
 	# --- wind ---
 	_wind_mat = ShaderMaterial.new()
 	_wind_mat.shader = load("res://shaders/wind.gdshader")
@@ -358,6 +377,11 @@ func on_setup() -> void:
 		_haze_mat.set_shader_parameter("max_alpha", Tuning.haze_max)
 		_focus_shown = -1
 	backdrop.redraw()
+	var dl := L.daylight   # dawn warm -> clear midday -> violet dusk
+	if dl < 0.5:
+		_day_mat.set_shader_parameter("tint", Color(1.0, 0.62, 0.42, lerpf(0.26, 0.0, dl * 2.0)))
+	else:
+		_day_mat.set_shader_parameter("tint", Color(0.62, 0.36, 0.74, lerpf(0.0, 0.3, (dl - 0.5) * 2.0)))
 	if Lanes.prof_on:
 		Lanes.prof_us[2] += float(Time.get_ticks_usec() - t_prof)
 
@@ -445,6 +469,7 @@ func update(dt: float) -> void:
 		_dir[i] = 1.0 if w >= 0.0 else -1.0
 	_wind_mat.set_shader_parameter("scroll", _scroll)
 	_wind_mat.set_shader_parameter("dir", _dir)
+	parallax.tick(dt, L.lane_wind[clampi(L.focus_lane, 0, L.n_lanes - 1)])
 	# hazards
 	for i in L.n_lanes:
 		var d := 1.0 if L.lane_vel[i] >= 0.0 else -1.0

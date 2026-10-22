@@ -9,4 +9,4 @@ func _draw() -> void:
 	if balloon != null:
 		balloon.body_draws += 1
 		draw_set_transform(Vector2(0, -Balloon.BASKET_PIVOT))
-		BalloonArt.shared().draw_basket(self, balloon.basket_id, balloon.pass_id, 4.0 / balloon.s())
+		BalloonArt.shared().draw_basket(self, balloon.basket_id, 0, 4.0 / balloon.s())

@@ -35,3 +35,9 @@ void vertex() {
 		VERTEX = sh + vec2(p.x * c - p.y * s, p.x * s + p.y * c);
 	}
 }
+
+void fragment() {
+	// a little more saturated than the raw vertex colours: hazards stay the loudest thing in the sky
+	float l = dot(COLOR.rgb, vec3(0.299, 0.587, 0.114));
+	COLOR.rgb = clamp(mix(vec3(l), COLOR.rgb, 1.22), 0.0, 1.0);
+}

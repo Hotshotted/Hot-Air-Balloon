@@ -10,7 +10,7 @@ extends Node
 const RATE := 11025            # effects
 const LOOP_RATE := 8000        # loops (lo-fi on purpose)
 const POOL := 8
-const NAMES := ["press", "tap", "back", "toggle", "buy", "error", "whoosh", "unlock", "star", "slam", "coin", "pickup", "thunk"]
+const NAMES := ["press", "tap", "back", "toggle", "buy", "error", "whoosh", "unlock", "star", "slam", "coin", "pickup", "thunk", "deflate", "cheer"]
 const BEAT := 0.6              # music: seconds per beat, 8 beats per loop
 const FADE_DB_PER_S := 60.0
 const MENU_DB := -17.0
@@ -87,6 +87,9 @@ func play(sound: String, pitch: float = 1.0) -> void:
 	p.pitch_scale = pitch
 	p.play()
 
+func play_deflate() -> void:
+	play("deflate")
+
 ## The music: `mode` 0 off, 1 menu / title / map (louder, calm), 2 flight (quieter). Every change is a glide (never a cut).
 func set_music(mode: int) -> void:
 	_music_target = [-80.0, MENU_DB, FLIGHT_DB][clampi(mode, 0, 2)]
@@ -120,6 +123,8 @@ func _build_effects() -> void:
 	_streams["slam"] = _wav(_mix(_sweep(180.0, 55.0, 0.22, 0.9, RATE), _seq([[1175.0, 0.3, 0.3]], RATE, 0.3, false, true)), RATE)
 	_streams["coin"] = _wav(_seq([[1319.0, 0.06, 0.4], [1760.0, 0.16, 0.4]], RATE, 0.5), RATE)
 	_streams["pickup"] = _wav(_seq([[660.0, 0.05, 0.4], [990.0, 0.05, 0.4], [1320.0, 0.14, 0.4]], RATE, 0.5, false, true), RATE)
+	_streams["deflate"] = _wav(_mix(_sweep(520.0, 90.0, 0.9, 0.5, RATE), _sweep(300.0, 60.0, 1.1, 0.4, RATE)), RATE)
+	_streams["cheer"] = _wav(_seq([[660.0, 0.08, 0.4], [880.0, 0.08, 0.4], [1100.0, 0.18, 0.4]], RATE, 0.5, false, true), RATE)
 	_streams["thunk"] = _wav(_sweep(200.0, 60.0, 0.2, 0.7, RATE), RATE)
 
 ## Notes [[hz, seconds, volume], ...] one after another with a short decay each. `square` = hollow tone, `bell` = a slow
