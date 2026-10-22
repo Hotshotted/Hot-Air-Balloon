@@ -184,6 +184,12 @@ var prewarm_stable_frames := 10
 var prewarm_stable_ms := 45.0
 var prewarm_max_seconds := 5.0
 
+# ---------- Intro and title ----------
+## The short, skippable logo intro at boot (the studio mark, then the game's name), and the living title screen after it.
+var intro_logo := true
+var intro_seconds := 2.8
+var title_screen := true
+
 ## Number with thousands separators.
 func fmt(v: float) -> String:
 	var s := str(int(roundf(v)))

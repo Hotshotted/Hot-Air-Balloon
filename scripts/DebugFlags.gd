@@ -2,6 +2,7 @@ class_name DebugFlags
 extends RefCounted
 ## Debug switches, read from the page URL on web (or "--flag=value" user args elsewhere), so a
 ## suspected cause of a hitch can be switched off from a phone without a new build:
+##   ?nosound        no sound at all (to rule the audio out on a phone)
 ##   ?debug          show the build stamp (it also shows with ?tune and ?perf); never otherwise
 ##   ?noprewarm      skip the start-up pre-warm and splash
 ##   ?perf           show a worst-frame-time readout
@@ -23,6 +24,7 @@ static var god := false
 static var unlockall := false
 static var preview := false
 static var debug := false
+static var nosound := false
 
 static func prewarm_enabled() -> bool:
 	_load()
@@ -37,6 +39,10 @@ static func preview_enabled() -> bool:
 	return preview
 
 ## The build stamp is only for people debugging: ?debug, ?tune or ?perf.
+static func sound_off() -> bool:
+	_load()
+	return nosound
+
 static func stamp_enabled() -> bool:
 	_load()
 	return debug or tune or perf
@@ -65,6 +71,8 @@ static func summary() -> String:
 		parts.append("god")
 	if debug:
 		parts.append("debug")
+	if nosound:
+		parts.append("nosound")
 	if unlockall:
 		parts.append("unlockall")
 	if preview:
@@ -98,6 +106,7 @@ static func parse(args: Array[String]) -> void:
 	unlockall = false
 	preview = false
 	debug = false
+	nosound = false
 	for a in args:
 		var kv := a.split("=", true, 1)
 		var key := kv[0].uri_decode().to_lower()
@@ -115,6 +124,8 @@ static func parse(args: Array[String]) -> void:
 				god = true
 			"debug":
 				debug = true
+			"nosound":
+				nosound = true
 			"unlockall":
 				unlockall = true
 			"preview":

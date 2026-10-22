@@ -23,6 +23,8 @@ var slot_names: Array[Label] = []
 var slot_prices: Array[Label] = []
 var action_btn: Button
 var _art: BalloonArt
+var _try_t := 1.0                       # 0..1: the balloon in the preview spinning round and inflating when you try something on
+var _try_tw: Tween
 
 func _ready() -> void:
 	size = Vector2(Lanes.W, Lanes.H)
@@ -81,10 +83,12 @@ func _set_category(c: int) -> void:
 	category = c
 	selected = Save.equipped(c)
 	refresh()
+	play_try()
 
 func _select(i: int) -> void:
 	selected = i
 	refresh()
+	play_try()
 
 func _on_action() -> void:
 	if Save.owns(category, selected):
@@ -93,6 +97,15 @@ func _on_action() -> void:
 		return
 	changed.emit()
 	refresh()
+
+## Trying something on: the preview balloon deflates, then inflates with an overshoot while it spins once round.
+func play_try() -> void:
+	if _try_tw != null and _try_tw.is_valid():
+		_try_tw.kill()
+	_try_t = 0.0
+	_try_tw = create_tween()
+	_try_tw.tween_method(func(v: float): _try_t = v; preview.queue_redraw(), 0.0, 1.0, 0.8)
+	Sfx.ui("pickup", 0.9)
 
 ## What the preview shows: the selected item of this category, the equipped items of the others.
 func preview_ids() -> Array:
@@ -130,8 +143,13 @@ func _draw_preview() -> void:
 	var r := Rect2(Vector2.ZERO, preview.size)
 	Regions.draw_backdrop(preview, 0, r, 5.0)
 	var ids := preview_ids()
-	preview.draw_set_transform(Vector2(preview.size.x * 0.5, 150.0), 0.0, Vector2(2.1, 2.1))
-	_art.draw(preview, ids[0], ids[1], ids[2], 0.0, 0.0, 4.0 / 2.1)
+	var t := _try_t
+	var inflate := 0.5 + 0.5 * Style.ease_out_back(clampf(t / 0.85, 0.0, 1.0))   # starts half-full, overshoots, settles
+	var angle := (1.0 - Style.ease_out_cubic(t)) * TAU
+	var xs := maxf(absf(cos(angle)), 0.18)                                          # a spin: the width swings through the turn
+	var sc := 2.1 * inflate
+	preview.draw_set_transform(Vector2(preview.size.x * 0.5, 150.0 + (1.0 - inflate) * 60.0), 0.0, Vector2(sc * xs, sc))
+	_art.draw(preview, ids[0], ids[1], ids[2], clampf(1.0 - t * 1.4, 0.0, 1.0), t * 4.0, 4.0 / sc)   # the burner lights while it fills
 	preview.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 func _draw_slot(b: Button, i: int) -> void:

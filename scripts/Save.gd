@@ -39,6 +39,8 @@ func _defaults() -> Dictionary:
 		"ad_counter": 0,          # Flights ended since the last interstitial (v5)
 		"flights_ended": 0,       # Flights ended in total, completed or failed (v5)
 		"tools_seen": 0,          # bit mask of the player tools whose one-line intro has been shown (v6)
+		"sound_volume": 1.0,      # the pause menu's sliders, 0..1 (v6)
+		"music_volume": 0.7,
 	}
 
 func _owned_default(cat: int) -> Array:
@@ -96,6 +98,17 @@ func _migrate(old: Dictionary) -> Dictionary:
 	d["last_flight"] = clampi(int(d["last_flight"]), 0, Flights.TOTAL - 1)
 	d["version"] = VERSION
 	return d
+
+func sound_volume() -> float:
+	return clampf(float(data["sound_volume"]), 0.0, 1.0)
+
+func music_volume() -> float:
+	return clampf(float(data["music_volume"]), 0.0, 1.0)
+
+func set_volumes(sound: float, music: float) -> void:
+	data["sound_volume"] = clampf(sound, 0.0, 1.0)
+	data["music_volume"] = clampf(music, 0.0, 1.0)
+	save()
 
 func save() -> void:
 	if not persist:

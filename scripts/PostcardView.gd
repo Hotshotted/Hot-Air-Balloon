@@ -15,6 +15,7 @@ var state := 0              # 0 = not earned, 1 = postcard, 2 = gold postcard
 var title: Label
 var hint: Label
 var _pts := PackedVector2Array()
+var stamp_amt := 1.0        # the round postmark: 0 = not yet stamped, 1 = stamped (it slams down with an overshoot)
 
 func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
@@ -83,6 +84,58 @@ func _draw() -> void:
 		Ui.draw_star(self, rb.get_center(), 10.0 * u, Color.WHITE)
 		Ui.draw_star(self, rb.get_center() + Vector2(28.0 * u, 0), 10.0 * u, Color.WHITE)
 	draw_rect(Rect2(Vector2.ZERO, s), Color.BLACK, false, 5.0 * u)
+	if stamp_amt > 0.01:
+		_postmark(Vector2(s.x * 0.2, s.y * 0.56), u)
+
+## A round red postmark with wavy cancel lines and a star: the card has been stamped into the album.
+func _postmark(c: Vector2, u: float) -> void:
+	var k := 1.0 + (1.0 - Style.ease_out_back(stamp_amt)) * 1.8
+	var a := clampf(stamp_amt * 1.6, 0.0, 1.0) * 0.88
+	var col := Color(0.8, 0.15, 0.15, a)
+	draw_set_transform(c, -0.21, Vector2(k * u, k * u))
+	draw_arc(Vector2.ZERO, 34.0, 0.0, TAU, 28, col, 4.0)
+	draw_arc(Vector2.ZERO, 26.0, 0.0, TAU, 24, col, 2.0)
+	var star := PackedVector2Array()
+	for i in 10:
+		var ang := -PI * 0.5 + TAU * float(i) / 10.0
+		star.append(Vector2(cos(ang), sin(ang)) * 12.0 * (1.0 if i % 2 == 0 else 0.45))
+	draw_colored_polygon(star, Color(0.8, 0.15, 0.15, a))
+	for i in 3:
+		var pts := PackedVector2Array()
+		for j in 9:
+			pts.append(Vector2(44.0 + float(j) * 9.0, -14.0 + float(i) * 14.0 + sin(float(j) * 1.4) * 3.0))
+		draw_polyline(pts, col, 3.0)
+	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+## The award animation: the card flips over (a quick turn about its middle), then the postmark slams down with a thud.
+func play_award() -> void:
+	if has_meta("pw"):
+		var old: Tween = get_meta("pw")
+		if old != null and old.is_valid():
+			old.kill()
+	pivot_offset = size * 0.5
+	scale = Vector2(0.0, 1.0)
+	rotation = -0.12
+	stamp_amt = 0.0
+	var tw := create_tween()
+	set_meta("pw", tw)
+	tw.tween_property(self, "scale:x", 1.0, 0.55).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+	tw.parallel().tween_property(self, "rotation", 0.0, 0.55).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	tw.tween_callback(func(): Sfx.ui("whoosh"))
+	tw.tween_interval(0.12)
+	tw.tween_method(func(v: float): stamp_amt = v; queue_redraw(), 0.0, 1.0, 0.32)
+	tw.tween_callback(func(): Sfx.ui("slam"))
+
+## The card slides into the album button (shrinking as it goes), then `done` runs.
+func slide_to(target_center: Vector2, done: Callable) -> void:
+	pivot_offset = size * 0.5
+	var tw := create_tween()
+	var end := target_center - size * 0.5
+	tw.set_parallel(true)
+	tw.tween_property(self, "position", end, Style.T_BASE * 1.3).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tw.tween_property(self, "scale", Vector2(0.12, 0.12), Style.T_BASE * 1.3).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+	tw.chain().tween_callback(done)
+	Sfx.ui("whoosh")
 
 func _poly(points: Array, fill: Color, w: float) -> void:
 	_pts.resize(points.size())

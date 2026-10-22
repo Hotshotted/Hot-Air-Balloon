@@ -32,6 +32,77 @@ class SplashDraw extends Control:
 		if x1 > x0:
 			draw_rect(Rect2(x0, r.position.y, x1 - x0, r.size.y), Style.ACCENT)
 
+## The logo intro: the studio mark spins up and settles with its wordmark, then the game's name pops in. Any tap skips it.
+class IntroDraw extends Control:
+	signal finished
+	var t := 0.0
+	var running := false
+	var total := 2.8
+
+	func start(seconds: float) -> void:
+		t = 0.0
+		total = seconds
+		running = true
+		visible = true
+		modulate.a = 1.0
+		queue_redraw()
+
+	func _process(delta: float) -> void:
+		if not running:
+			return
+		t += delta
+		if t >= total:
+			_finish()
+		else:
+			queue_redraw()
+
+	func _gui_input(event: InputEvent) -> void:
+		if running and ((event is InputEventMouseButton and event.pressed) or (event is InputEventScreenTouch and event.pressed) or (event is InputEventKey and event.pressed)):
+			_finish()
+
+	func _finish() -> void:
+		running = false
+		visible = false
+		finished.emit()
+
+	func _draw() -> void:
+		var cx := size.x * 0.5
+		var cy := size.y * 0.5
+		draw_rect(Rect2(Vector2.ZERO, size), Color("0d1a33"))
+		draw_circle(Vector2(cx, cy * 0.8), 700.0, Color(Style.SURFACE_DARK_2, 0.5))
+		var split := total * 0.55
+		if t < split:
+			var u := t / split
+			var pop := Style.ease_out_back(clampf(t / 0.45, 0.0, 1.0))
+			var fade := 1.0 - Style.ease_in_cubic(clampf((t - (split - 0.25)) / 0.25, 0.0, 1.0))
+			var angle := (1.0 - Style.ease_out_cubic(clampf(t / 1.3, 0.0, 1.0))) * TAU * 3.0
+			draw_set_transform(Vector2(cx, cy - 60.0), 0.0, Vector2(pop, pop))
+			Style.draw_mark(self, Vector2.ZERO, 130.0, angle, fade)
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+			var wa := clampf((t - 0.35) / 0.3, 0.0, 1.0) * fade
+			Style.draw_wordmark(self, cx, cy + 190.0 + (1.0 - Style.ease_out_cubic(clampf((t - 0.35) / 0.3, 0.0, 1.0))) * 30.0, Style.SZ_M, wa)
+		else:
+			var u2 := (t - split) / (total - split)
+			var pop2 := Style.ease_out_back(clampf(u2 / 0.4, 0.0, 1.0))
+			var fade2 := 1.0 - Style.ease_in_cubic(clampf((u2 - 0.82) / 0.18, 0.0, 1.0))
+			draw_set_transform(Vector2(cx, cy - 40.0), 0.0, Vector2(pop2, pop2))
+			var f := Style.display()
+			for k in 2:
+				var word := "WIND" if k == 0 else "LAYERS"
+				var y := -110.0 + 190.0 * float(k)
+				var col := Color(Style.TEXT if k == 0 else Style.ACCENT, fade2)
+				var wsz := f.get_string_size(word, HORIZONTAL_ALIGNMENT_LEFT, -1, 190)
+				draw_string_outline(f, Vector2(-wsz.x * 0.5, y + 70.0), word, HORIZONTAL_ALIGNMENT_LEFT, -1, 190, 24, Color(Style.INK, fade2))
+				draw_string(f, Vector2(-wsz.x * 0.5, y + 70.0), word, HORIZONTAL_ALIGNMENT_LEFT, -1, 190, col)
+			draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+signal pause_pressed
+signal resume_pressed
+signal restart_pressed
+signal quit_pressed
+signal title_play_pressed
+signal home_pressed
+signal logo_finished
 signal fly_pressed
 signal prev_pressed
 signal next_pressed
@@ -66,6 +137,23 @@ var goal_icon: IconView
 var prog_icons: Array[IconView] = []
 var menu_region_icon: IconView
 var menu_star_icons: Array[IconView] = []
+var title: TitleScreen
+var intro: IntroDraw
+var pause_btn: Button
+var pause_p: Control
+var sound_slider: HSlider
+var music_slider: HSlider
+var carry: Control                 # leg-to-leg propane carry-over gauge
+var carry_frac := 0.0
+var carry_shown := 0.0
+var carry_t := 0.0
+var result_t := 99.0               # seconds since the result screen came up (the stars slam in one after another)
+var result_fuel := 0.0             # the propane left, as a share of the tank (the gauge fills to it)
+var result_gauge: Control
+var _star_slammed := [false, false, false]
+var _shake := 0.0
+var nav_dir := 1                  # the next screen slides in from the right (1: forward) or from the left (-1: back)
+var _flash: ColorRect             # a quick dim that fades out on every screen change (the cross-fade)
 var _g_track: StyleBoxFlat
 var _g_fill := {}
 var _g_sheen: StyleBoxFlat
@@ -201,8 +289,24 @@ func _ready() -> void:
 		tb.visible = false
 		add_child(tb)
 		tool_btns.append(tb)
+	pause_btn = Ui.ghost_button("pause", Vector2(Lanes.W - 30.0 - 92.0, 12), 92.0)
+	pause_btn.visible = false
+	pause_btn.pressed.connect(func(): pause_pressed.emit())
+	add_child(pause_btn)
+	carry = _CarryGauge.new()
+	carry.hud = self
+	carry.size = Vector2(760, 150)
+	carry.position = Vector2(160, 1020)
+	carry.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	carry.visible = false
+	add_child(carry)
+	title = TitleScreen.new()
+	title.visible = false
+	add_child(title)
+	title.play_pressed.connect(func(): title_play_pressed.emit())
 	map = MapScreen.new()
 	add_child(map)
+	map.home_pressed.connect(func(): home_pressed.emit())
 	map.flight_chosen.connect(func(id: int): flight_chosen.emit(id))
 	map.album_pressed.connect(func(): album_pressed.emit())
 	map.shop_pressed.connect(func(): shop_pressed.emit())
@@ -226,9 +330,22 @@ func _ready() -> void:
 	boost_btn.pressed.connect(func(): boost_pressed.emit())
 	add_child(boost_btn)
 	_build_ad()
+	_build_pause()
 	var splash_layer := CanvasLayer.new()
 	splash_layer.layer = 100
 	add_child(splash_layer)
+	_flash = ColorRect.new()
+	_flash.color = Style.SCRIM
+	_flash.size = Vector2(Lanes.W, Lanes.H)
+	_flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_flash.modulate.a = 0.0
+	splash_layer.add_child(_flash)
+	intro = IntroDraw.new()
+	intro.size = Vector2(Lanes.W, Lanes.H)
+	intro.mouse_filter = Control.MOUSE_FILTER_STOP
+	intro.visible = false
+	intro.finished.connect(func(): logo_finished.emit())
+	splash_layer.add_child(intro)
 	splash = SplashDraw.new()
 	splash.size = Vector2(Lanes.W, Lanes.H)
 	splash.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -312,6 +429,124 @@ func _build_menu() -> void:
 	for b in [prev_btn, next_btn, fly_btn, menu_back]:
 		menu_p.add_child(b)
 
+## The pause menu: Resume (the one primary), Restart, Quit, and the sound and music sliders.
+func _build_pause() -> void:
+	pause_p = _panel()
+	pause_p.add_child(Ui.card(Vector2(90, 330), Vector2(900, 1180)))
+	pause_p.add_child(Ui.label("PAUSED", 110, HORIZONTAL_ALIGNMENT_CENTER, Vector2(90, 380), Vector2(900, 150)))
+	var resume := Ui.button("RESUME", 80, Vector2(190, 590), Vector2(700, 170), Color(0.95, 0.5, 0.15), "play")
+	resume.pressed.connect(func(): resume_pressed.emit())
+	pause_p.add_child(resume)
+	var restart := Ui.button("RESTART", 56, Vector2(190, 790), Vector2(700, 120), Ui.COL_BTN, "restart")
+	restart.pressed.connect(func(): restart_pressed.emit())
+	pause_p.add_child(restart)
+	var quit := Ui.button("QUIT TO MAP", 56, Vector2(190, 940), Vector2(700, 120), Ui.COL_BTN, "map")
+	quit.pressed.connect(func(): quit_pressed.emit())
+	pause_p.add_child(quit)
+	pause_p.add_child(Ui.icon("speaker", 64, Vector2(150, 1110)))
+	sound_slider = _slider(Vector2(240, 1118))
+	pause_p.add_child(sound_slider)
+	pause_p.add_child(Ui.icon("note", 64, Vector2(150, 1260)))
+	music_slider = _slider(Vector2(240, 1268))
+	pause_p.add_child(music_slider)
+	sound_slider.value_changed.connect(func(v: float): _volumes_changed(true))
+	music_slider.value_changed.connect(func(v: float): _volumes_changed(false))
+
+static var _grabber: ImageTexture
+
+func _slider(pos: Vector2) -> HSlider:
+	var sl := HSlider.new()
+	sl.position = pos
+	sl.size = Vector2(700, 48)
+	sl.min_value = 0.0
+	sl.max_value = 1.0
+	sl.step = 0.05
+	sl.value = 1.0
+	sl.focus_mode = Control.FOCUS_NONE
+	sl.add_theme_stylebox_override("slider", Style.box(Color(Style.INK, 0.85), Color(1, 1, 1, 0.3), 14, 3, false))
+	sl.add_theme_stylebox_override("grabber_area", Style.box(Style.SUCCESS, Style.SUCCESS.lightened(0.25), 14, 2, false))
+	sl.add_theme_stylebox_override("grabber_area_highlight", Style.box(Style.SUCCESS, Style.SUCCESS.lightened(0.25), 14, 2, false))
+	if _grabber == null:   # a round gold knob with an ink outline, built once
+		var img := Image.create(56, 56, false, Image.FORMAT_RGBA8)
+		for y in 56:
+			for x in 56:
+				var d := Vector2(x - 27.5, y - 27.5).length()
+				if d < 27.0:
+					img.set_pixel(x, y, Style.INK if d > 22.0 else Style.ACCENT)
+		_grabber = ImageTexture.create_from_image(img)
+	sl.add_theme_icon_override("grabber", _grabber)
+	sl.add_theme_icon_override("grabber_highlight", _grabber)
+	return sl
+
+var _volumes_silent := false
+
+func _volumes_changed(is_sound: bool) -> void:
+	if _volumes_silent:
+		return
+	Save.set_volumes(sound_slider.value, music_slider.value)
+	Sfx.apply_volumes()
+	if is_sound:
+		Sfx.ui("tap")
+
+func show_pause() -> void:
+	_volumes_silent = true
+	sound_slider.value = Save.sound_volume()
+	music_slider.value = Save.music_volume()
+	_volumes_silent = false
+	pause_p.visible = true
+	Motion.pop(pause_p.get_child(1), 0.0)
+	_flash.modulate.a = 0.0
+
+func hide_pause() -> void:
+	pause_p.visible = false
+
+## The leg-to-leg propane carry-over: a tank gauge that fills to what the next leg starts with.
+func show_carry(frac: float) -> void:
+	carry_frac = clampf(frac, 0.0, 1.0)
+	carry_shown = 0.0
+	carry_t = 0.0
+	carry.visible = true
+	carry.queue_redraw()
+
+## The propane left at the end of a Flight, as a gauge that fills after the stars have landed (the gold tick is the second star's target).
+class _ResultGauge extends Control:
+	var hud: Hud
+
+	func _draw() -> void:
+		var k := Style.ease_out_cubic(clampf((hud.result_t - 1.7) / 0.9, 0.0, 1.0))
+		Icons.draw(self, "propane", Vector2(34, size.y * 0.5), 28.0)
+		var track := Rect2(80, 14, size.x - 90.0, 42)
+		draw_style_box(Style.box(Color(Style.INK, 0.9), Color(1, 1, 1, 0.3), 21, 3, false), track)
+		var fw := (track.size.x - 8.0) * hud.result_fuel * k
+		if fw > 12.0:
+			draw_style_box(Style.box(Style.SUCCESS, Style.SUCCESS.lightened(0.25), 17, 2, false), Rect2(track.position + Vector2(4, 4), Vector2(fw, 34)))
+		var tx := track.position.x + 4.0 + (track.size.x - 8.0) * Tuning.star_propane_frac
+		draw_line(Vector2(tx, 8), Vector2(tx, 62), Style.INK, 8.0)
+		draw_line(Vector2(tx, 8), Vector2(tx, 62), Style.ACCENT, 4.0)
+
+class _CarryGauge extends Control:
+	var hud: Hud
+
+	func _process(delta: float) -> void:
+		if not visible or hud == null:
+			return
+		hud.carry_t += delta
+		var k := Style.ease_out_cubic(clampf((hud.carry_t - 0.1) / 0.6, 0.0, 1.0))
+		var v := hud.carry_frac * k
+		if absf(v - hud.carry_shown) > 0.001:
+			hud.carry_shown = v
+			queue_redraw()
+
+	func _draw() -> void:
+		draw_style_box(Style.box(Color(Style.SURFACE_DARK, 0.95), Color(1, 1, 1, 0.5), Style.R_L), Rect2(0, 0, size.x, size.y))
+		Icons.draw(self, "propane", Vector2(70, size.y * 0.5), 38.0)
+		var track := Rect2(130, 52, size.x - 190.0, 46)
+		draw_style_box(Style.box(Color(Style.INK, 0.9), Color(1, 1, 1, 0.3), 23, 3, false), track)
+		var fw := (track.size.x - 8.0) * hud.carry_shown
+		if fw > 12.0:
+			draw_style_box(Style.box(Style.SUCCESS, Style.SUCCESS.lightened(0.25), 19, 2, false), Rect2(track.position + Vector2(4, 4), Vector2(fw, 38)))
+		draw_string(Style.display(), Vector2(130, 36), "NEXT LEG TANK", HORIZONTAL_ALIGNMENT_LEFT, -1, 26, Style.TEXT_SOFT)
+
 func _build_ad() -> void:
 	ad_p = _panel()
 	ad_p.get_child(0).color = Color(Style.SCRIM, 0.97)
@@ -349,6 +584,15 @@ func _end_ad(rewarded: bool) -> void:
 	ad_finished.emit(rewarded)
 
 func _process(delta: float) -> void:
+	if result_p.visible and result_t < 3.0:
+		result_t += delta
+		result_icons.queue_redraw()
+		result_gauge.queue_redraw()
+		if _shake > 0.0:
+			_shake = maxf(_shake - delta, 0.0)
+			result_p.position.x = sin(result_t * 90.0) * 10.0 * (_shake / 0.3)
+		else:
+			result_p.position.x = 0.0
 	if ad_active and ad_left > 0.0:
 		ad_left -= delta
 		var secs := ceili(maxf(ad_left, 0.0))
@@ -357,6 +601,14 @@ func _process(delta: float) -> void:
 			ad_count.text = "%d" % secs if secs > 0 else ""
 		if ad_left <= 0.0:
 			ad_claim.disabled = false
+
+## CONTINUE on the award screen: the postcard slides into the album (towards the album button on the map), then the screen closes.
+func _card_to_album() -> void:
+	var home_pos := card_view.position
+	card_view.slide_to(Vector2(190.0, 1840.0), func():
+		card_p.visible = false
+		card_view.position = home_pos
+		card_view.scale = Vector2.ONE)
 
 func _build_card() -> void:
 	card_p = _panel()
@@ -368,7 +620,7 @@ func _build_card() -> void:
 	card_view.size = Vector2(1020, 700)
 	card_p.add_child(card_view)
 	var cont := Ui.button("CONTINUE", 60, Vector2(190, 1250), Vector2(700, 130), Color(0.95, 0.5, 0.15), "check")
-	cont.pressed.connect(func(): card_p.visible = false)
+	cont.pressed.connect(_card_to_album)
 	card_p.add_child(cont)
 
 func _build_dead() -> void:
@@ -404,7 +656,13 @@ func _build_result() -> void:
 		var l := Ui.label("", 42, HORIZONTAL_ALIGNMENT_LEFT, Vector2(220, 445.0 + 130.0 * float(i)), Vector2(770, 80))
 		result_p.add_child(l)
 		result_rows.append(l)
-	result_summary = Ui.label("", 44, HORIZONTAL_ALIGNMENT_CENTER, Vector2(60, 850), Vector2(960, 440))
+	result_gauge = _ResultGauge.new()
+	result_gauge.hud = self
+	result_gauge.position = Vector2(110, 830)
+	result_gauge.size = Vector2(860, 70)
+	result_gauge.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	result_p.add_child(result_gauge)
+	result_summary = Ui.label("", 44, HORIZONTAL_ALIGNMENT_CENTER, Vector2(60, 930), Vector2(960, 400))
 	result_summary.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	result_p.add_child(result_summary)
 	result_again = Ui.button("AGAIN", 56, Vector2(90, 1380), Vector2(440, 130), Ui.COL_BTN, "restart")
@@ -421,10 +679,27 @@ func _draw_three(ci: Control, lit: Array, r: float, gap: float, y: float) -> voi
 	for i in 3:
 		Ui.draw_star(ci, Vector2(60.0 + gap * float(i), y), r, Style.ACCENT if lit[i] else Color(0.3, 0.33, 0.42))
 
-## Three stars one under the other, one per row.
+## Three stars one under the other, one per row. On the result screen a lit star SLAMS in (big, shrinking to its place with a
+## thud and a ring, a little higher in pitch each time) when its turn comes; unlit ones are simply there, dim.
 func _draw_rows(ci: Control, lit: Array, r: float, gap: float) -> void:
 	for i in 3:
-		Ui.draw_star(ci, Vector2(55.0, 55.0 + gap * float(i)), r, Style.ACCENT if lit[i] else Color(0.3, 0.33, 0.42))
+		var c := Vector2(55.0, 55.0 + gap * float(i))
+		if not lit[i]:
+			Ui.draw_star(ci, c, r, Color(0.3, 0.33, 0.42))
+			continue
+		var ts := 0.35 + 0.5 * float(i)
+		if result_t < ts:
+			Ui.draw_star(ci, c, r, Color(0.3, 0.33, 0.42, 0.5))
+			continue
+		var u := clampf((result_t - ts) / 0.4, 0.0, 1.0)
+		var k := 1.0 + (1.0 - Style.ease_out_cubic(clampf(u / 0.5, 0.0, 1.0))) * 1.9 + sin(u * PI * 3.0) * 0.08 * (1.0 - u)
+		Ui.draw_star(ci, c, r * k, Style.ACCENT)
+		if u < 0.7:   # the ring of the impact
+			ci.draw_arc(c, r * (1.0 + 2.2 * u), 0.0, TAU, 28, Color(Style.ACCENT, 1.0 - u / 0.7), 6.0)
+		if not _star_slammed[i]:
+			_star_slammed[i] = true
+			Sfx.ui("slam", 1.0 + 0.14 * float(i))
+			_shake = 0.3
 
 func _draw_gauge() -> void:
 	var w := gauge.size.x
@@ -450,7 +725,7 @@ func _draw_prog() -> void:
 
 ## Show or hide the in-flight readouts (flight name, score, gauge, star progress): only while flying.
 func set_flight_hud(on: bool) -> void:
-	for n in [level_label, score_label, coins_label, gauge, prog, goal_label, goal_icon, propane_icon]:
+	for n in [level_label, score_label, coins_label, gauge, prog, goal_label, goal_icon, propane_icon, pause_btn]:
 		n.visible = on
 	if not on:
 		air_label.visible = false
@@ -543,6 +818,9 @@ func tick(dt: float) -> void:
 
 func hide_overlays() -> void:
 	banner.visible = false
+	title.visible = false
+	pause_p.visible = false
+	carry.visible = false
 	map.visible = false
 	album.visible = false
 	shop.visible = false
@@ -554,6 +832,19 @@ func hide_overlays() -> void:
 	dead_p.visible = false
 	result_p.visible = false
 	_banner_left = 0.0
+
+## A screen arrives: slide in from the side the navigation came from, over a quick cross-fade.
+func _enter(panel: Control) -> void:
+	Motion.enter(panel, nav_dir)
+	nav_dir = 1
+	_flash.modulate.a = 0.55
+	var tw := _flash.create_tween()
+	tw.tween_property(_flash, "modulate:a", 0.0, Style.T_BASE)
+
+func show_title() -> void:
+	hide_overlays()
+	title.visible = true
+	_enter(title)
 
 func show_menu(region_name: String, blurb: String, title: String, lit1: bool, lit2: bool, lit3: bool, info: String, can_prev: bool, can_next: bool, can_fly: bool, daily: bool = false) -> void:
 	hide_overlays()
@@ -577,37 +868,47 @@ func show_menu(region_name: String, blurb: String, title: String, lit1: bool, li
 	next_btn.disabled = not can_next
 	fly_btn.disabled = not can_fly
 	menu_p.visible = true
+	_enter(menu_p)
 
 func show_map() -> void:
 	hide_overlays()
 	map.refresh()
 	map.visible = true
+	_enter(map)
 
 func show_shop() -> void:
 	hide_overlays()
 	shop.open()
 	shop.visible = true
+	_enter(shop)
 
 func show_album() -> void:
 	hide_overlays()
 	album.refresh()
 	album.visible = true
+	_enter(album)
 
 ## The award screen: over the result screen. state 1 = postcard, 2 = gold.
 func show_postcard(region: int, state: int) -> void:
 	card_view.set_card(region, state)
 	card_header.text = "GOLD POSTCARD!" if state == 2 else "NEW POSTCARD!"
 	card_p.visible = true
+	_enter(card_p)
+	card_view.play_award()
 
 func show_dead(text: String, can_retry: bool = false) -> void:
 	hide_overlays()
 	dead_text.text = text
 	retry_btn.visible = can_retry
 	dead_p.visible = true
+	_enter(dead_p)
 
 ## rows: the three star lines; lit: which stars were earned.
-func show_result(row0: String, row1: String, row2: String, lit1: bool, lit2: bool, lit3: bool, summary: String, can_next: bool) -> void:
+func show_result(row0: String, row1: String, row2: String, lit1: bool, lit2: bool, lit3: bool, summary: String, can_next: bool, fuel_frac: float = 0.0) -> void:
 	hide_overlays()
+	result_t = 0.0
+	result_fuel = clampf(fuel_frac, 0.0, 1.0)
+	_star_slammed = [false, false, false]
 	result_rows[0].text = row0
 	result_rows[1].text = row1
 	result_rows[2].text = row2
@@ -618,6 +919,7 @@ func show_result(row0: String, row1: String, row2: String, lit1: bool, lit2: boo
 	result_summary.text = summary
 	result_next.disabled = not can_next
 	result_p.visible = true
+	_enter(result_p)
 
 func begin_prewarm() -> void:
 	hide_overlays()
@@ -658,6 +960,12 @@ func begin_prewarm() -> void:
 	set_fuel(0.2)
 	set_progress(2, 5, 12.0, 4, 9)
 	set_flight_hud(true)
+	title.visible = true
+	pause_p.visible = true
+	carry.visible = true
+	carry_frac = 0.6
+	carry_shown = 0.6
+	carry.queue_redraw()
 	splash.visible = true
 
 func end_prewarm() -> void:

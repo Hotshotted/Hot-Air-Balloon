@@ -184,6 +184,8 @@ func _initialize() -> void:
 	sv.persist = false
 	sv.reset_all()
 	tn.ads_enabled = false   # (the ad section switches them on)
+	tn.intro_logo = false    # (the logo intro and the title screen have their own section)
+	tn.title_screen = false
 	MainS = load("res://scripts/Main.gd")
 	LanesS = load("res://scripts/Lanes.gd")
 	BalloonS = load("res://scripts/Balloon.gd")
@@ -1016,7 +1018,8 @@ func _run() -> void:
 	check(m.hud.card_p.visible and m.hud.card_header.text == "NEW POSTCARD!" and m.hud.card_view.region == 0 and m.hud.card_view.state == 1, "the award screen shows the new postcard")
 	check(m.hud.card_view.title.text == "Greetings from the Countryside", "...with its title")
 	m.hud.card_p.get_child(m.hud.card_p.get_child_count() - 1).pressed.emit()
-	check(not m.hud.card_p.visible and m.hud.result_p.visible, "CONTINUE returns to the result screen")
+	await real_wait(0.7)
+	check(not m.hud.card_p.visible and m.hud.result_p.visible and m.hud.card_view.scale == Vector2.ONE, "CONTINUE slides the postcard into the album and returns to the result screen")
 	win_flight(m, 5, 0, 5.0)
 	check(m.last_postcard.is_empty() and not m.hud.card_p.visible and sv.postcard_of(0) == 1, "replaying does not award it again")
 	sv.reset_all()
@@ -2440,6 +2443,151 @@ func _run() -> void:
 	check(is_equal_approx(m.hud.level_label.position.y, lvl_y0) and is_equal_approx(m.hud.tool_btns[0].position.y, tool_y0) and is_equal_approx(m.hud.map.scale.y, 1.0), "...and back when there is no inset")
 	var style_doc := FileAccess.get_file_as_string("res://docs/style.md")
 	check(style_doc.contains("## Palette") and style_doc.contains("## Typography") and style_doc.contains("## Icons") and style_doc.contains("## Motion") and style_doc.contains("## Safe areas") and style_doc.contains("## Deviations"), "docs/style.md documents the system and its deviations")
+	m.start_flight(0)
+
+	# ---- 7e. motion and screens ----
+	print("7e. motion: press feedback, transitions, pause, title, intro, map, postcards, shop, results")
+	DebugFlags.parse([])
+	sv.reset_all()
+	m.start_flight(0)
+	m.set_process(true)
+	# button press: squash while down, bounce on release, a soft click and a tap sound
+	var mo_btn_t: Button = m.hud.pause_btn
+	var mo_press0: int = m.sfx.plays["press"]
+	var mo_tap0: int = m.sfx.plays["tap"]
+	Ui.press_down(mo_btn_t)
+	await real_wait(0.25)
+	check(mo_btn_t.scale.x < 0.97 and mo_btn_t.scale.y < 0.97 and m.sfx.plays["press"] == mo_press0 + 1, "a button squashes under the finger with a soft click (scale %.2f)" % mo_btn_t.scale.x)
+	Ui.press_up(mo_btn_t)
+	var mo_peak_s := 0.0
+	for i in 30:
+		await process_frame
+		mo_peak_s = maxf(mo_peak_s, mo_btn_t.scale.x)
+	await real_wait(0.3)
+	check(mo_peak_s > 1.0 and is_equal_approx(mo_btn_t.scale.x, 1.0), "...and bounces back past full size on release (peak %.3f)" % mo_peak_s)
+	var mo_restart_b: Button = m.hud.pause_p.get_child(4)
+	mo_restart_b.pressed.emit()
+	check(m.sfx.plays["tap"] == mo_tap0 + 1, "a button that fires makes the forward tap")
+	m.start_flight(0)
+	# screen transitions: forward slides in from the right, back from the left, each over a quick cross-fade
+	m._show_map()
+	check(m.hud.map.modulate.a < 1.0 and m.hud.map.position.x > m.hud.map.get_meta("rest_x", 0.0) + 40.0, "forward: the map slides in from the right and fades in")
+	await real_wait(0.5)
+	check(is_equal_approx(m.hud.map.modulate.a, 1.0) and is_equal_approx(m.hud.map.position.x, m.hud.map.get_meta("rest_x", 0.0)), "...and settles exactly in place after T_BASE")
+	m.hud.nav_dir = -1
+	m._show_shop()
+	m.hud.nav_dir = -1
+	m._show_map()
+	check(m.hud.map.position.x < m.hud.map.get_meta("rest_x", 0.0) - 40.0 and m.hud.nav_dir == 1, "back: slides in from the left, and the direction resets to forward")
+	await real_wait(0.5)
+	# the map: a dotted route through all 24 Flights, the balloon drifting along it
+	var mo_mp7 = m.hud.map
+	var mo_route_ok: bool = mo_mp7.route.size() == 24
+	for i in range(1, 24):
+		mo_route_ok = mo_route_ok and mo_mp7.route_dist(i) > mo_mp7.route_dist(i - 1)
+	check(mo_route_ok, "the hand-drawn map has one dotted route through all 24 Flights")
+	var mo_bp0: Vector2 = mo_mp7._balloon_sprite.position
+	await real_wait(1.2)
+	check(mo_mp7._balloon_sprite.position != mo_bp0 or mo_mp7.suggested == 0, "your balloon drifts along the route")
+	# stars animate in: earn stars, refresh, the pops play and then the stars are lit
+	sv.record_flight(0, 3, 500)
+	mo_mp7.refresh()
+	check(not mo_mp7.pops.is_empty() and mo_mp7._draw_stars[0] == 0, "new stars wait for their pop (%d popping)" % mo_mp7.pops.size())
+	await real_wait(1.8)
+	check(mo_mp7.pops.is_empty() and mo_mp7._draw_stars[0] == 3 and m.sfx.plays["star"] >= 3, "...each pops in with a rising chime, then the stars are lit")
+	var mo_node1_scale_ok: bool = mo_mp7.nodes[1].modulate.a > 0.99
+	check(mo_node1_scale_ok, "a newly opened Flight pops onto the map")
+	# pause: the button, the menu, a frozen world, the sliders, auto-pause on losing the window
+	m.start_flight(0)
+	check(m.hud.pause_btn.visible and not m.paused, "the pause button is in the top corner while flying")
+	m.burn_override = 1
+	step(m, 0.5, 1)
+	m.pause_game()
+	var mo_py0: float = m.balloon.position.y
+	check(m.paused and m.hud.pause_p.visible, "pausing opens the pause menu")
+	step(m, 1.0, 1)
+	check(m.balloon.position.y == mo_py0 and not m._holding(), "...and the world stands still (no sim, no burner)")
+	m.hud.sound_slider.value = 0.5
+	m.hud.music_slider.value = 0.0
+	check(is_equal_approx(sv.sound_volume(), 0.5) and sv.music_volume() == 0.0 and AudioServer.is_bus_mute(AudioServer.get_bus_index("Music")) and not AudioServer.is_bus_mute(AudioServer.get_bus_index("SFX")), "the sound and music sliders set the saved volumes and the audio buses")
+	m.hud.sound_slider.value = 1.0
+	m.hud.music_slider.value = 0.7
+	m.resume_game()
+	check(not m.paused and not m.hud.pause_p.visible, "RESUME continues")
+	step(m, 0.5, 1)
+	check(m.balloon.position.y != mo_py0, "...the balloon flies on")
+	m.pause_game()
+	m.hud.pause_p.get_child(4).pressed.emit()
+	check(not m.paused and m.screen == MainS.SCREEN_PLAY and m.leg == 0 and m.balloon.on_ground, "RESTART resumes into a fresh Flight")
+	m.pause_game()
+	m.hud.pause_p.get_child(5).pressed.emit()
+	await process_frame
+	check(not m.paused and m.screen == MainS.SCREEN_MAP, "QUIT TO MAP leaves the Flight")
+	m.start_flight(0)
+	m._notification(NOTIFICATION_APPLICATION_FOCUS_OUT)
+	check(m.paused, "losing focus pauses a flight automatically")
+	m._notification(NOTIFICATION_APPLICATION_FOCUS_IN)
+	m.resume_game()
+	m._suspended = false
+	# the logo intro (skippable) and the living title screen
+	tn.intro_logo = true
+	tn.title_screen = true
+	m.hud.hide_overlays()
+	m._after_boot()
+	check(m.hud.intro.visible and m.hud.intro.running, "boot: the logo intro plays (the studio mark, then the game's name)")
+	await real_wait(0.6)
+	check(m.hud.intro.visible and m.hud.intro.t > 0.4, "...for a couple of seconds")
+	var mo_skip := InputEventMouseButton.new()
+	mo_skip.button_index = MOUSE_BUTTON_LEFT
+	mo_skip.pressed = true
+	m.hud.intro._gui_input(mo_skip)
+	check(not m.hud.intro.visible and m.screen == MainS.SCREEN_TITLE and m.hud.title.visible, "any tap skips it, straight to the title screen")
+	var mo_tt = m.hud.title
+	var mo_hill0: float = mo_tt._hills[2].position.x
+	mo_tt._process(1.0)
+	check(mo_tt._balloons.size() >= 4 and mo_tt._hills[2].position.x != mo_hill0 and mo_tt.play_btn.get_child(0) is IconView, "the title screen: balloons over a valley at dawn, the hills creep, one big PLAY button")
+	mo_tt.play_btn.pressed.emit()
+	check(m.screen == MainS.SCREEN_MAP, "PLAY opens the world map")
+	m.hud.home_pressed.emit()
+	check(m.screen == MainS.SCREEN_TITLE, "the map's home button goes back to the title")
+	tn.intro_logo = false
+	tn.title_screen = false
+	m._show_map()
+	# postcards: flip in, stamp slams, slide into the album
+	var mo_slam0: int = m.sfx.plays["slam"]
+	m.hud.show_postcard(1, 1)
+	check(m.hud.card_view.scale.x < 0.5 and m.hud.card_view.stamp_amt == 0.0, "an award postcard starts face-down and unstamped")
+	await real_wait(1.3)
+	check(m.hud.card_view.scale.x == 1.0 and m.hud.card_view.stamp_amt == 1.0 and m.sfx.plays["slam"] == mo_slam0 + 1, "...flips over, then the postmark slams down with a thud")
+	m.hud.card_p.visible = false
+	# shop: the preview inflates and spins when you try something on
+	m._show_shop()
+	var mo_shop7 = m.hud.shop
+	var mo_pick0: int = m.sfx.plays["pickup"]
+	mo_shop7._select(2)
+	check(mo_shop7._try_t < 0.2 and m.sfx.plays["pickup"] == mo_pick0 + 1, "the shop preview starts a spin and inflate when you try something on")
+	await real_wait(1.0)
+	check(is_equal_approx(mo_shop7._try_t, 1.0), "...and settles")
+	m._show_map()
+	# results: stars slam in one by one, the propane gauge fills
+	m.hud.show_result("a", "b", "c", true, true, false, "summary", true, 0.6)
+	var mo_slam1: int = m.sfx.plays["slam"]
+	check(m.hud.result_t < 0.2 and m.hud.result_fuel == 0.6, "the result screen starts its star sequence")
+	await real_wait(2.6)
+	check(m.sfx.plays["slam"] == mo_slam1 + 2 and m.hud._star_slammed == [true, true, false], "the two earned stars slam in one after the other (rising pitch), the third stays dim")
+	# propane carried over between legs: a gauge fills to the next leg's tank
+	m.start_flight(0)
+	clear_sky(m)
+	m.fuel = 64.0
+	win_leg(m)
+	check(m.screen == MainS.SCREEN_CLEAR and m.hud.carry.visible and is_equal_approx(m.hud.carry_frac, m.fuel / tn.propane_start), "between legs a gauge shows the propane carried into the next leg's tank")
+	await real_wait(0.9)
+	check(absf(m.hud.carry_shown - m.hud.carry_frac) < 0.01 and m.hud.carry_shown > 0.5, "...and fills to it")
+	# the music glides between modes (never a cut) and the volumes start sensible
+	m.sfx.set_music(1)
+	var mo_m1: float = m.sfx.music_mode_db
+	m.sfx.set_music(2)
+	check(m.sfx.music_mode_db < mo_m1 and sv.sound_volume() == 1.0 and is_equal_approx(sv.music_volume(), 0.7), "music: menus louder than flights, saved volumes default to 100% / 70%")
 	m.start_flight(0)
 
 	# ---- 8. restart in place ----

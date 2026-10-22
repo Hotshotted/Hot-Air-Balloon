@@ -150,7 +150,39 @@ static func button(text: String, size: int, pos: Vector2, area: Vector2, color: 
 	b.focus_mode = Control.FOCUS_NONE
 	if icon != "":
 		add_icon(b, icon, minf(area.y * 0.5, 64.0))
+	hook_press(b, icon)
 	return b
+
+## Press feedback on any button: it squashes while the finger is down and bounces back on release (Style.T_FAST), with a soft
+## click on the way down, a tap (or a "back" for back / close buttons) when it fires, and a light haptic tick.
+static func hook_press(b: Button, icon: String = "") -> void:
+	b.pivot_offset = b.size * 0.5
+	var snd := "back" if (icon == "back" or icon == "close") else "tap"
+	b.button_down.connect(func(): press_down(b))
+	b.button_up.connect(func(): press_up(b))
+	b.pressed.connect(func(): Sfx.ui(snd))
+
+static func press_down(b: Button) -> void:
+	if b.disabled:
+		return
+	if b.has_meta("tw"):
+		var old: Tween = b.get_meta("tw")
+		if old != null and old.is_valid():
+			old.kill()
+	var tw := b.create_tween()
+	b.set_meta("tw", tw)
+	tw.tween_property(b, "scale", Vector2(0.95, 0.93), Style.T_FAST).set_trans(Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+	Sfx.ui("press")
+	Input.vibrate_handheld(12)
+
+static func press_up(b: Button) -> void:
+	if b.has_meta("tw"):
+		var old: Tween = b.get_meta("tw")
+		if old != null and old.is_valid():
+			old.kill()
+	var tw := b.create_tween()
+	b.set_meta("tw", tw)
+	tw.tween_property(b, "scale", Vector2.ONE, Style.T_FAST * 1.6).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 
 ## An icon at the left of a button; the text moves right to make room (content margin).
 static func add_icon(b: Button, icon: String, px: float) -> IconView:
@@ -175,6 +207,7 @@ static func ghost_button(icon: String, pos: Vector2, px: float = 96.0) -> Button
 	var iv := IconView.new(icon, px * 0.56)
 	iv.position = Vector2(px * 0.22, px * 0.22)
 	b.add_child(iv)
+	hook_press(b, icon)
 	return b
 
 ## A card: the shared panel (fill, light border, soft shadow) with the highlight cap across its top. Returns the panel.
@@ -226,3 +259,5 @@ static func fit_safe(screen: Control, viewport: Vector2 = Vector2(1080.0, 1920.0
 	screen.pivot_offset = Vector2.ZERO
 	screen.scale = Vector2(k, k)
 	screen.position = Vector2(Style.safe_left + ((viewport.x - Style.safe_left - Style.safe_right) - viewport.x * k) * 0.5, Style.safe_top)
+	screen.set_meta("rest_x", screen.position.x)
+	screen.set_meta("rest_scale", screen.scale)

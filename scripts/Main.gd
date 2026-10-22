@@ -4,7 +4,7 @@ extends Node2D
 ## One scene for the whole session. Restarting is IN PLACE: the pooled hazards, effects and UI nodes
 ## stay alive (and warm); only the game state is reset.
 
-enum { SCREEN_MENU, SCREEN_PLAY, SCREEN_CLEAR, SCREEN_DEAD, SCREEN_RESULT, SCREEN_MAP, SCREEN_ALBUM, SCREEN_SHOP }
+enum { SCREEN_MENU, SCREEN_PLAY, SCREEN_CLEAR, SCREEN_DEAD, SCREEN_RESULT, SCREEN_MAP, SCREEN_ALBUM, SCREEN_SHOP, SCREEN_TITLE }
 ## Seconds the "leg cleared" banner holds before the next leg starts.
 const CLEAR_HOLD := 1.3
 
@@ -48,6 +48,8 @@ var recipe: LegRecipe               # this leg's goal and twists
 var tool_charges := PackedInt32Array([0, 0, 0])   # sandbag, anchor, quick vent: charges left this leg
 const CONTROL_HINT := "HOLD anywhere to fire the burner and rise. Let go to sink."
 var _hinted := false
+var sfx: Sfx
+var paused := false                 # the pause menu is up: the world stands still
 var burn_override := -1             # tests: 1 = burner held, 0 = released, -1 = read the real input
 var tool_avail: Array = []         # the tools this Flight offers
 var _goal_key := -1                  # the Daily Flight is a little harder than its region's mid Flight
@@ -59,6 +61,8 @@ func _ready() -> void:
 	lanes = $Lanes
 	balloon = $Balloon
 	balloon.lanes = lanes
+	sfx = Sfx.new()
+	add_child(sfx)
 	hud = $Hud
 	if DebugFlags.tune_enabled():
 		tune_panel = TunePanel.new()
@@ -71,15 +75,22 @@ func _ready() -> void:
 	hud.next_pressed.connect(func(): _select(selected + 1))
 	ads = Ads.new(hud)
 	hud.again_pressed.connect(func(): _proceed(func(): start_flight(flight_id)))
-	hud.menu_pressed.connect(func(): _proceed(_show_map))
-	hud.back_pressed.connect(_show_map)
+	hud.menu_pressed.connect(func(): hud.nav_dir = -1; _proceed(_show_map))
+	hud.back_pressed.connect(func(): hud.nav_dir = -1; _show_map())
 	hud.daily_pressed.connect(_open_daily)
 	hud.boost_pressed.connect(_on_boost)
 	hud.retry_pressed.connect(_on_retry)
 	hud.album_pressed.connect(_show_album)
-	hud.album_closed.connect(_show_map)
+	hud.album_closed.connect(func(): hud.nav_dir = -1; _show_map())
 	hud.shop_pressed.connect(_show_shop)
-	hud.shop_closed.connect(_show_map)
+	hud.pause_pressed.connect(pause_game)
+	hud.resume_pressed.connect(resume_game)
+	hud.restart_pressed.connect(func(): resume_game(); start_flight(flight_id))
+	hud.quit_pressed.connect(func(): resume_game(); hud.nav_dir = -1; _show_map())
+	hud.title_play_pressed.connect(_show_map)
+	hud.home_pressed.connect(func(): hud.nav_dir = -1; _show_title())
+	hud.logo_finished.connect(_after_logo)
+	hud.shop_closed.connect(func(): hud.nav_dir = -1; _show_map())
 	hud.flight_chosen.connect(func(id: int): selected = id; _show_menu())
 	hud.next_flight_pressed.connect(func(): _proceed(_on_next_flight))
 	selected = Save.suggested_flight()
@@ -93,7 +104,7 @@ func _ready() -> void:
 		if DebugFlags.prewarm_enabled():
 			_prewarm()
 			return
-	_show_map()
+	_after_boot()
 	if tune_panel:
 		tune_panel.set_available(true)
 
@@ -125,6 +136,43 @@ func _select(id: int) -> void:
 	selected = clampi(id, 0, Flights.TOTAL - 1) if id != Flights.DAILY else id
 	_refresh_menu()
 
+## After the start-up pre-warm: the logo intro (skippable) if it is on, then the title screen (or straight to the map).
+func _after_boot() -> void:
+	if Tuning.intro_logo:
+		hud.hide_overlays()
+		hud.intro.start(Tuning.intro_seconds)
+		sfx.set_music(1)
+	else:
+		_after_logo()
+
+func _after_logo() -> void:
+	if Tuning.title_screen:
+		_show_title()
+	else:
+		_show_map()
+
+func _show_title() -> void:
+	screen = SCREEN_TITLE
+	get_tree().paused = false
+	lanes.visible = false
+	balloon.visible = false
+	hud.set_flight_hud(false)
+	hud.show_title()
+	sfx.set_music(1)
+
+## The pause menu: the world stands still (the pause button, or the window losing focus).
+func pause_game() -> void:
+	if screen != SCREEN_PLAY or paused or _warming:
+		return
+	paused = true
+	hud.show_pause()
+
+func resume_game() -> void:
+	if not paused:
+		return
+	paused = false
+	hud.hide_pause()
+
 ## The world map (the home screen).
 func _show_map() -> void:
 	screen = SCREEN_MAP
@@ -137,6 +185,7 @@ func _show_map() -> void:
 	hud.set_air("")
 	hud.set_flight_hud(false)
 	hud.show_map()
+	sfx.set_music(1)
 
 func _show_shop() -> void:
 	screen = SCREEN_SHOP
@@ -144,6 +193,7 @@ func _show_shop() -> void:
 	balloon.visible = false
 	hud.set_flight_hud(false)
 	hud.show_shop()
+	sfx.set_music(1)
 
 func _show_album() -> void:
 	screen = SCREEN_ALBUM
@@ -151,6 +201,7 @@ func _show_album() -> void:
 	balloon.visible = false
 	hud.set_flight_hud(false)
 	hud.show_album()
+	sfx.set_music(1)
 
 ## The Flight screen: name, stars, what each star needs, FLY.
 func _show_menu() -> void:
@@ -259,7 +310,7 @@ func _prewarm() -> void:
 		tune_panel.prewarm_show(false)
 		tune_panel.set_available(true)
 	_warming = false
-	_show_map()
+	_after_boot()
 
 # ---------------------------------------------------------------------------------------------------------
 # Flight flow
@@ -307,6 +358,7 @@ func _begin_leg() -> void:
 	snap_score = score
 	hud.set_flight_hud(true)
 	hud.set_goal_icon(recipe.goal)
+	sfx.set_music(2)
 	hud.hide_overlays()
 	hud.set_flight_title("%s   LEG %d/%d" % [_flight_name(flight_id), leg + 1, int(Tuning.legs_per_flight)])
 	hud.set_fuel(fuel / Tuning.propane_start)
@@ -362,6 +414,7 @@ func _clear_leg() -> void:
 		_finish_flight()
 		return
 	hud.show_banner("LEG %d CLEARED\n+%d  speed +%d" % [leg, roundi(Tuning.level_points), last_bonus], CLEAR_HOLD)
+	hud.show_carry(fuel / Tuning.propane_start)
 	_update_progress()
 	clear_left = CLEAR_HOLD
 	screen = SCREEN_CLEAR
@@ -393,7 +446,7 @@ func _finish_flight() -> void:
 		"Propane left %d  (needs %d)" % [int(fuel), tgt_p],
 		"Coins collected %d  (needs %d)" % [coins_picked, Flights.coin_target()],
 		true, last_stars >= 2 and fuel >= Flights.propane_target(), coins_picked >= Flights.coin_target(),
-		summary, not daily and flight_id + 1 < Flights.TOTAL and Flights.region_of(flight_id + 1) == flight_region and Save.flight_unlocked(flight_id + 1))
+		summary, not daily and flight_id + 1 < Flights.TOTAL and Flights.region_of(flight_id + 1) == flight_region and Save.flight_unlocked(flight_id + 1), fuel / Tuning.propane_start)
 	last_postcard = []
 	if not daily:
 		var pc := Save.update_postcards()   # the region's last Flight earns its postcard; 3 stars on all six make it gold
@@ -460,9 +513,11 @@ func _on_tool_button(pos: Vector2) -> bool:
 
 ## Is the player holding (a finger or the mouse anywhere on the playfield, Space or Up)? Hold = burn.
 func _holding() -> bool:
+	if paused:
+		return false
 	if burn_override >= 0:
 		return burn_override == 1
-	if (tune_panel and tune_panel.is_open) or hud.ad_active:
+	if (tune_panel and tune_panel.is_open) or hud.ad_active or paused:
 		return false
 	if Input.is_key_pressed(KEY_SPACE) or Input.is_key_pressed(KEY_UP) or Input.is_key_pressed(KEY_W):
 		return true
@@ -477,7 +532,7 @@ func _tap_free(pos: Vector2) -> bool:
 
 ## One simulation step of `dt` seconds.
 func sim(dt: float) -> void:
-	if hud.ad_active:   # an ad is up: the world stands still
+	if hud.ad_active or paused:   # an ad or the pause menu is up: the world stands still
 		return
 	sim_time += dt
 	hud.tick(dt)
@@ -599,7 +654,7 @@ func _sync_tools() -> void:
 
 ## Use tool i (0 sandbag, 1 anchor, 2 quick vent): only while flying, if it is on offer and has a charge left.
 func use_tool(i: int) -> bool:
-	if screen != SCREEN_PLAY or hud.ad_active or not tool_avail.has(i) or tool_charges[i] <= 0:
+	if screen != SCREEN_PLAY or hud.ad_active or paused or not tool_avail.has(i) or tool_charges[i] <= 0:
 		return false
 	tool_charges[i] -= 1
 	match i:
@@ -616,7 +671,7 @@ func use_tool(i: int) -> bool:
 
 ## Touches on the tool buttons (handled here so a second finger works while the first holds the burner).
 func _input(event: InputEvent) -> void:
-	if _warming or screen != SCREEN_PLAY:
+	if _warming or screen != SCREEN_PLAY or paused:
 		return
 	var pos := Vector2(-1, -1)
 	if event is InputEventScreenTouch and event.pressed:
@@ -681,6 +736,7 @@ func _notification(what: int) -> void:
 				_suspended = true
 				_paused_since_ms = Time.get_ticks_msec()
 				_note_event("window went to the background")
+				pause_game()   # (a flight in progress waits on the pause menu)
 		NOTIFICATION_APPLICATION_FOCUS_IN, NOTIFICATION_APPLICATION_RESUMED, NOTIFICATION_WM_WINDOW_FOCUS_IN:
 			if _suspended:
 				_suspended = false
