@@ -2709,6 +2709,11 @@ func _run() -> void:
 	check(AudioServer.get_bus_index("SFX") > 0 and AudioServer.get_bus_index("Music") > 0 and AudioServer.get_bus_count() == 3, "the SFX and Music buses exist from the start (%d buses)" % AudioServer.get_bus_count())
 	var sh_txt := FileAccess.get_file_as_string("res://web/shell.html")
 	check(sh_txt.contains("visibilitychange") and sh_txt.contains("pagehide") and sh_txt.contains("blur") and sh_txt.contains("suspend()") and sh_txt.contains("pointerdown"), "the web shell unlocks audio on the first tap and suspends it when the page is hidden")
+	var wav_ok := true
+	for nm in load("res://scripts/Sfx.gd").NAMES + ["music", "roar", "wind", "rumble"]:
+		wav_ok = wav_ok and ResourceLoader.exists("res://assets/audio/%s.wav" % nm)
+	check(wav_ok, "every sound is a pre-rendered WAV under assets/audio (nothing is synthesised on the device)")
+	check(ProjectSettings.get_setting("audio/general/default_playback_type.web", 0) == 1, "on the web the loops play through the browser's native (gapless) sample playback")
 	var au2: Node = load("res://scripts/Sfx.gd").new()
 	root.add_child(au2)
 	check(not au2.unlocked, "audio starts locked")

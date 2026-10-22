@@ -144,3 +144,23 @@ text and the chunky ink border and lip on buttons and tool tiles.
   parallax ridge layers and a time-of-day wash (dawn to dusk across a Flight's legs) baked into the colours.
 - **Audio** (as in Pattern-Control): short, soft and rounded, procedural; buses come from `default_bus_layout.tres`; audio unlocks on
   the first tap and is suspended when the page is hidden, closed or loses focus (`web/shell.html`).
+
+## Wind you can read (Storybook Sky, second pass)
+
+- Every layer is filled with soft white **wind streaks**: curved, tapered, varying in length, travelling across the layer at exactly
+  its wind (shader-driven MultiMesh, `wind.gdshader`). Faster layers: more, longer, faster streaks; calm layers: three short wisps.
+  Streaks fade in and out along their path (never pop), stay inside their layer (never cross a boundary) and keep a low contrast
+  so hazards and the balloon always read on top. In a reversing layer they slow, stop and turn round with the countdown.
+- The **sky is one gradient**: each layer keeps its tone, blended into the next over a short band; no seams, no divider lines.
+  **Tick marks** at both screen edges mark every layer boundary.
+- The **edge pill** per layer is drawn (not text): one, two or three chevrons for speed, a dash for calm, `<> n` for a countdown.
+
+## Audio plumbing
+
+- Every sound is **pre-rendered** to `assets/audio/*.wav` by `tools/make_audio.gd` from `scripts/AudioSynth.gd` (soft, short,
+  rounded; a calm music loop); nothing is synthesised on a device. The buses come from `default_bus_layout.tres`.
+- On the web the engine plays through the browser's **native sample playback** (`audio/general/default_playback_type.web`), so the
+  loops are gapless; `web/shell.html` catches the audio contexts, unlocks them on the first tap and suspends them on
+  `visibilitychange`, `pagehide` and `blur`.
+- CI loads the exported page in Chromium under **4x CPU throttle** (`tools/web_audio_check.mjs`): boot, first-tap unlock, a real-time
+  audio clock, and suspend / resume on every one of those events.

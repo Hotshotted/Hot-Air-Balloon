@@ -61,6 +61,22 @@ $GODOT_HEAD_INCLUDE
   <div class="bar indeterminate" id="bar"><div class="fill" id="fill"></div></div>
   <div id="fail"><span id="fail-text"></span><button onclick="location.reload()">Try again</button></div>
 </div>
+<script>
+// Keep every AudioContext the engine creates (see the audio block at the end of the page).
+window.__audioCtxs = [];
+(function () {
+  const Native = window.AudioContext || window.webkitAudioContext;
+  if (!Native) { return; }
+  const Wrapped = function (opts) {
+    const c = new Native(opts);
+    window.__audioCtxs.push(c);
+    return c;
+  };
+  Wrapped.prototype = Native.prototype;
+  window.AudioContext = Wrapped;
+  window.webkitAudioContext = Wrapped;
+}());
+</script>
 <script src="$GODOT_URL"></script>
 <script>
 const GODOT_CONFIG = $GODOT_CONFIG;
@@ -107,20 +123,23 @@ const engine = new Engine(GODOT_CONFIG);
 }());
 </script>
 <script>
-// Web audio: the browser starts the audio context suspended until a gesture (unlock it on the first tap / key), and a hidden
-// tab, a closed page or a lost focus suspends it again so nothing keeps playing in the background.
+// Web audio: the browser starts every audio context suspended until a gesture (unlock them on the first tap / key), and a hidden
+// tab, a closed page or a lost focus suspends them again so nothing keeps playing in the background. The contexts are caught
+// as they are created (the engine plays its loops through the browser's native sample playback: gapless).
 (function () {
   let unlocked = false;
-  function ctx() {
-    try { return (typeof GodotAudio !== 'undefined' && GodotAudio.ctx) || null; } catch (e) { return null; }
+  const ctxs = window.__audioCtxs || [];
+  function all() {
+    const out = ctxs.slice();
+    try { if (typeof GodotAudio !== 'undefined' && GodotAudio.ctx && out.indexOf(GodotAudio.ctx) < 0) { out.push(GodotAudio.ctx); } } catch (e) {}
+    return out;
   }
   function resume() {
-    const c = ctx();
-    if (unlocked && c && c.state !== 'running') { c.resume(); }
+    if (!unlocked) { return; }
+    all().forEach(function (c) { if (c.state !== 'running') { c.resume(); } });
   }
   function suspend() {
-    const c = ctx();
-    if (c && c.state === 'running') { c.suspend(); }
+    all().forEach(function (c) { if (c.state === 'running') { c.suspend(); } });
   }
   function unlock() {
     unlocked = true;

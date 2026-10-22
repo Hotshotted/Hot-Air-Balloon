@@ -92,6 +92,17 @@ jobs:
           ! grep -q '\$GODOT_' build/web/index.html
           ls -la build/web
 
+      # The exported page, in a real browser under 4x CPU throttle: audio unlocks on the first tap, its clock keeps real time, and it
+      # is suspended / resumed with visibilitychange, pagehide and blur.
+      - name: Web audio check (4x CPU throttle)
+        run: |
+          mkdir -p /tmp/wac && cd /tmp/wac && npm init -y >/dev/null && npm i playwright@1.49.1 >/dev/null
+          npx playwright install --with-deps chromium >/dev/null
+          cp "$GITHUB_WORKSPACE/tools/web_audio_check.mjs" .
+          (cd "$GITHUB_WORKSPACE/build/web" && python3 -m http.server 8080 >/dev/null 2>&1 &)
+          for i in 1 2 3 4 5 6 7 8 9 10; do curl -fs http://localhost:8080/ >/dev/null && break; sleep 1; done
+          node web_audio_check.mjs http://localhost:8080/
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: build/web
