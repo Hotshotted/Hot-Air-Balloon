@@ -2281,7 +2281,7 @@ func _run() -> void:
 	check(bad_gap == 0, "every gap >= %.0f px in %d gaps (smallest %.0f)" % [min_gap, checked, min_seen])
 	check(bad_shape == 0, "start and goal layers are clear; every level has a hazard layer")
 	check(bad_limit == 0, "layer count, wind speeds and layer fill within limits")
-	check(dens[10] > dens[1] and dens[25] >= dens[10] - 0.2, "hazard density grows with the level (%.1f -> %.1f -> %.1f)" % [dens[1], dens[10], dens[25]])
+	check(dens[1] >= 1.0 and dens[25] <= 2.0 + 0.01, "hazards are big, so a layer holds at most two (%.1f -> %.1f -> %.1f); the difficulty grows through layers, wind and kinds" % [dens[1], dens[10], dens[25]])
 	check(lanes.layers_for(1) == 5 and lanes.layers_for(3) == 7 and lanes.layers_for(30) == tn.layers_max, "layers: 5 at level 1, +1 per level, capped")
 	check(lanes.wind_for(30) == tn.wind_max, "wind speed is capped")
 	# Pickups sit in a gap, not on a hazard.
