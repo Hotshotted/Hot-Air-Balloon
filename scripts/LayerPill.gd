@@ -1,7 +1,7 @@
 class_name LayerPill
 extends Node2D
 ## The small navy pill at the left edge of a wind layer: chevrons in the wind's direction (one slow, two steady, three fast),
-## "calm" when it hardly blows, and "<> n" with a countdown while the layer is about to reverse. Redrawn only when its
+## a dash when it hardly blows, and "<> n" with a countdown while the layer is about to reverse. Redrawn only when its
 ## state changes (a reversing layer once a second).
 
 const H := 52.0
@@ -26,10 +26,10 @@ func set_state(wind: float, countdown: int) -> void:
 
 func _draw() -> void:
 	var f := Style.font_for("Fredoka", 26)
-	_w = 110.0 if text == "calm" else (30.0 + 28.0 * float(text.length()) if not text.begins_with("<>") else 150.0)
+	_w = 92.0 if text == "calm" else (30.0 + 28.0 * float(text.length()) if not text.begins_with("<>") else 150.0)
 	draw_colored_polygon(SvgArt.rrect(0.0, 0.0, _w, H, H * 0.5), Color(0.078, 0.129, 0.239, 0.82))
 	if text == "calm":
-		draw_string(f, Vector2(0, H * 0.5 + 9.0), "calm", HORIZONTAL_ALIGNMENT_CENTER, _w, 26, Color.WHITE)
+		draw_colored_polygon(SvgArt.rrect(_w * 0.5 - 22.0, H * 0.5 - 4.0, 44.0, 8.0, 4.0), Color.WHITE)   # a dash: calm
 	elif text.begins_with("<>"):
 		_chevron(Vector2(26.0, H * 0.5), -1.0)
 		_chevron(Vector2(50.0, H * 0.5), 1.0)

@@ -1,7 +1,7 @@
 class_name Backdrop
 extends Node2D
-## The sky that never moves during a leg: a slightly different tone for every wind layer (lighter toward the ground), soft
-## wavy white cloud seams between them, and the sun or stars. Storybook Sky: no flat bands with black lines. BackdropFront draws
+## The sky that never moves during a leg: a slightly different tone for every wind layer (lighter toward the ground) blended into
+## one gradient, small tick marks at the screen edges where the layers meet, and the sun or stars. Storybook Sky: no flat bands with black lines. BackdropFront draws
 ## the hills, the bunting and the cables over the parallax ridges. Drawn ONCE when a leg is set up (redraw()), never per frame.
 
 var lanes: Lanes
@@ -24,12 +24,25 @@ func _draw() -> void:
 	var c_low: Color = Regions.SKY_LOW[r]
 	var c_mid: Color = Regions.SKY_MID[r]
 	var c_high: Color = Regions.SKY_HIGH[r]
-	draw_rect(Rect2(0, 0, Lanes.W, Lanes.BAND_TOP + 1.0), L.tinted(Regions.SKY_TOP[r], Lanes.BAND_TOP * 0.5))
-	draw_rect(Rect2(0, Lanes.BAND_BOTTOM - 1.0, Lanes.W, Lanes.H - Lanes.BAND_BOTTOM + 1.0), L.tinted(c_low, Lanes.BAND_BOTTOM + 100.0))
-	for i in n:
+	# One sky gradient: each layer has its own tone (lighter toward the ground) and the tones blend smoothly into each other over a
+	# short band around every boundary: no hard seams, no divider lines.
+	var cols: Array = [L.tinted(Regions.SKY_TOP[r], Lanes.BAND_TOP * 0.5)]
+	for k in n:   # from the top layer down
+		var i := n - 1 - k
 		var t := (float(i) + 0.5) / float(n)   # 0 = the lowest layer
 		var col := c_low.lerp(c_mid, minf(t * 2.0, 1.0)) if t < 0.5 else c_mid.lerp(c_high, (t - 0.5) * 2.0)
-		draw_rect(Rect2(0, Lanes.BAND_BOTTOM - float(i + 1) * L.lane_h, Lanes.W, L.lane_h + 1.0), L.tinted(col, Lanes.BAND_BOTTOM - (float(i) + 0.5) * L.lane_h))
+		cols.append(L.tinted(col, Lanes.BAND_BOTTOM - (float(i) + 0.5) * L.lane_h))
+	cols.append(cols[n])
+	var bh := minf(L.lane_h * 0.26, 46.0)   # half the height of a blend band
+	var y_prev := 0.0
+	for k in n + 1:   # the boundary k lies between cols[k] and cols[k+1]
+		var yb := Lanes.BAND_TOP + float(k) * L.lane_h
+		var c0: Color = cols[k]
+		var c1: Color = cols[k + 1]
+		draw_rect(Rect2(0, y_prev, Lanes.W, yb - bh - y_prev + 1.0), c0)
+		draw_polygon(PackedVector2Array([Vector2(0, yb - bh), Vector2(Lanes.W, yb - bh), Vector2(Lanes.W, yb + bh), Vector2(0, yb + bh)]), PackedColorArray([c0, c0, c1, c1]))
+		y_prev = yb + bh
+	draw_rect(Rect2(0, y_prev, Lanes.W, Lanes.H - y_prev), cols[n + 1])
 	if r == 3:   # Himalayas at dusk: the first stars
 		var seed_v := 17
 		for k in 40:
@@ -41,11 +54,7 @@ func _draw() -> void:
 	if r == 2:   # the Sahara noon sun
 		draw_circle(Vector2(860, 560), 150.0, Color(1.0, 0.95, 0.78, 0.35))
 		draw_circle(Vector2(860, 560), 96.0, Color("fff1c8"))
-	var seam_pts := PackedVector2Array()
-	for i in range(1, n):   # the soft wavy white seams between layers
-		var y0 := Lanes.BAND_BOTTOM - float(i) * L.lane_h
-		seam_pts.clear()
-		for k in 48:
-			var x := -20.0 + float(k) * 24.0
-			seam_pts.append(Vector2(x, y0 + sin(x / 300.0 * TAU + float(i) * 1.7) * 14.0))
-		draw_polyline(seam_pts, Color(1, 1, 1, 0.45), 14.0, true)
+	for i in range(1, n):   # small tick marks at both screen edges: where one layer ends and the next begins
+		var yt := Lanes.BAND_BOTTOM - float(i) * L.lane_h
+		draw_colored_polygon(SvgArt.rrect(0.0, yt - 5.0, 46.0, 10.0, 5.0), Color(1, 1, 1, 0.85))
+		draw_colored_polygon(SvgArt.rrect(Lanes.W - 46.0, yt - 5.0, 46.0, 10.0, 5.0), Color(1, 1, 1, 0.85))

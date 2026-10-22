@@ -195,12 +195,26 @@ func _make_mm(mesh: Mesh, count: int, colors: bool, mat: Material, _stride: int 
 
 # ---- the small meshes of the wind decoration ----
 
-## A wind ribbon (nominal length 100, stretched along x by the shader to the ribbon's length; the arrowhead at the tip stays its size, UV.x 1): a gently
-## waving white stroke with an arrowhead. It points +x; the shader flips it for a layer blowing the other way.
+## A wind streak (nominal length 100, stretched along x by the shader to its length): a soft white curved wisp, thin at both ends and
+## fullest toward the head, bowed like a stroke of wind. It points +x; the shader flips it for a layer blowing the other way.
 func _streak_mesh() -> ArrayMesh:
 	var m := ShapeMesh.new()
-	m.polyline([Vector2(-100.0, 0.0), Vector2(-75.0, -5.0), Vector2(-50.0, 0.0), Vector2(-25.0, 5.0), Vector2(0.0, 0.0)], 8.0, Color.WHITE, 0.0)
-	m.polyline([Vector2(-20.0, -15.0), Vector2(0.0, 0.0), Vector2(-20.0, 15.0)], 8.0, Color.WHITE, 1.0)
+	var top := PackedVector2Array()
+	var bottom := PackedVector2Array()
+	var n := 14
+	for i in n + 1:
+		var u := float(i) / float(n)
+		var x := -100.0 + 100.0 * u
+		var bow := -10.0 * sin(PI * u) + 4.0 * sin(TAU * u)   # a gentle S-bow
+		var th := 9.0 * pow(sin(PI * u), 0.8) * (0.3 + 0.7 * u)
+		top.append(Vector2(x, bow - th))
+		bottom.append(Vector2(x, bow + th))
+	var poly: Array = []
+	for p in top:
+		poly.append(p)
+	for i in range(n, -1, -1):
+		poly.append(bottom[i])
+	m.poly(poly, Color.WHITE, false, 0.0)
 	return m.build()
 
 ## A cloud: a flat-bottomed puff (white fill, UV.x 0) with a soft blue-grey outline (UV.x 1); the shader tints both.
@@ -275,10 +289,12 @@ func on_setup() -> void:
 	for i in L.n_lanes:
 		var strength := clampf(absf(L.lane_base[i]) / 220.0, 0.0, 1.0)
 		var calm := absf(L.lane_base[i]) < 30.0
-		var ribbons := 1 if calm else mini(1 + int(strength * 4.0), Lanes.PARTS_PER_LANE)   # more ribbons, and longer, the faster the layer
-		for j in ribbons:
-			_wind_instance(_streak_buf, np, float(i), rng.randf() * Lanes.W, rng.randf_range(0.12, 0.88), 0.0,
-				1.0, (60.0 if calm else (130.0 + 300.0 * strength)) * rng.randf_range(0.8, 1.2), 0.35 if calm else rng.randf_range(0.6, 0.9), 0.0)
+		var streaks := 3 if calm else mini(3 + int(strength * 5.0), Lanes.PARTS_PER_LANE)   # faster layers: more, longer streaks
+		for j in streaks:
+			var yf := 0.24 + 0.52 * (float(j) + rng.randf() * 0.8) / float(streaks)   # (inside the layer: never across a boundary)
+			var length := (70.0 + rng.randf() * 50.0) if calm else (160.0 + 330.0 * strength) * rng.randf_range(0.65, 1.3)
+			_wind_instance(_streak_buf, np, float(i), rng.randf() * (Lanes.W + 520.0), yf, 0.0,
+				1.0, length, (0.34 if calm else rng.randf_range(0.5, 0.7)), 0.0)
 			np += 1
 		for c in Lanes.CLOUDS_PER_LANE:   # clouds: every layer has some, sized by luck, all moving at exactly the layer's wind
 			_wind_instance(_cloud_buf, nc, float(i), (float(c) + rng.randf_range(0.0, 0.8)) * Lanes.W / float(Lanes.CLOUDS_PER_LANE),
@@ -432,7 +448,7 @@ func update(dt: float) -> void:
 	for i in L.n_lanes:
 		var w := L.lane_wind[i]
 		_scroll[i] += w * dt
-		_dir[i] = 1.0 if w >= 0.0 else -1.0
+		_dir[i] = clampf(w / 60.0, -1.0, 1.0)
 	_wind_mat.set_shader_parameter("scroll", _scroll)
 	_wind_mat.set_shader_parameter("dir", _dir)
 	parallax.tick(dt, L.lane_wind[clampi(L.focus_lane, 0, L.n_lanes - 1)])

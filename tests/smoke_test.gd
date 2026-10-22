@@ -2783,6 +2783,36 @@ func _run() -> void:
 	tn.leg_check = false
 	m.start_flight(0)
 
+	# ---- 7j. wind you can read: streaks inside the layers, blended sky, edge ticks ----
+	print("7j. wind streaks, blended layers")
+	DebugFlags.parse([])
+	m.start_flight(0)
+	var wl = m.lanes
+	wl.setup(1.0, false, 321, 1)
+	var wr = wl.render
+	for i in 4:
+		wl.update(0.05)
+	var dir_ok := true
+	for i in wl.n_lanes:
+		dir_ok = dir_ok and absf(wr._dir[i]) <= 1.0 and signf(wr._dir[i]) == signf(wl.lane_wind[i]) or absf(wl.lane_wind[i]) < 1.0
+	check(dir_ok, "every layer's streak direction follows its wind (smoothly, -1..1)")
+	check(wr._streaks.multimesh.visible_instance_count >= wl.n_lanes * 3 and wr._streaks.multimesh.visible_instance_count <= wl.n_lanes * 8, "3 to 8 wind streaks per layer (%d)" % wr._streaks.multimesh.visible_instance_count)
+	var dash_pill = wr._pills[0]
+	dash_pill.set_state(5.0, 0)
+	check(dash_pill.text == "calm", "a calm layer's pill shows a dash")
+	var rev_i := -1
+	for i in wl.n_lanes:
+		if wl.lane_rev[i] > 0.0:
+			rev_i = i
+	if rev_i >= 0:   # a reversing layer: its streak direction passes through zero as the wind turns
+		var dmin := 1.0
+		var dmax := -1.0
+		for k in 400:
+			wl.update(0.1)
+			dmin = minf(dmin, wr._dir[rev_i])
+			dmax = maxf(dmax, wr._dir[rev_i])
+		check(dmin < -0.5 and dmax > 0.5, "a reversing layer's streaks slow, stop and turn round (%.2f .. %.2f)" % [dmin, dmax])
+
 	# ---- 8. restart in place ----
 	print("8. restart in place")
 	m.set_process(true)
