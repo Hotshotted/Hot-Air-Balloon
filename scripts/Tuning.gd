@@ -36,7 +36,7 @@ var edge_wrap := true
 ## now, the ghost rings where the hazards will be.
 var preview_seconds := 1.5
 ## Balloon size multiplier, and how much of its drawn size counts for collisions (0.85 = forgiving).
-var balloon_scale := 0.8
+var balloon_scale := 1.8
 var hit_forgiveness := 0.85
 
 # ---------- Wind layers ----------

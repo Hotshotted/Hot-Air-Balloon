@@ -10,14 +10,14 @@ const BASKET := 1
 const PASSENGER := 2
 const CATEGORIES := ["ENVELOPES", "BASKETS", "PASSENGERS"]
 
-## Envelopes: name, price, shape (0 round, 1 cat head, 2 hot dog, 3 fish), pattern (see BalloonArt), colours 1-3.
-const ENV_NAMES := ["Classic", "Sunset", "Candy", "Ocean", "Mint", "Berry", "Lemon", "Checkers", "Forest", "Starry", "Rainbow", "Cat", "Hot Dog", "Fish"]
+## Envelopes: name, price, shape (0 round, 1 cat head, 2 hot dog, 3 fish), pattern (0 centre gore, 1 bands, 2 side gores, 3 gore and bands), colours 1-3.
+const ENV_NAMES := ["Classic", "Banded", "Twilight", "Meadow", "Sunset", "Candy", "Lemon", "Berry", "Forest", "Starry", "Rainbow", "Whiskers", "Hot Dog", "Big Fish"]
 const ENV_PRICE := [0, 150, 180, 200, 220, 250, 280, 320, 360, 400, 450, 900, 1000, 1100]
 const ENV_SHAPE := [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3]
-const ENV_PATTERN := [0, 3, 2, 3, 1, 5, 0, 4, 2, 6, 3, 0, 0, 0]
-const ENV_C1 := [Color(1.0, 0.45, 0.16), Color(1.0, 0.55, 0.2), Color(0.9, 0.2, 0.25), Color(0.2, 0.5, 0.9), Color(0.5, 0.9, 0.75), Color(0.6, 0.25, 0.8), Color(1.0, 0.9, 0.3), Color(0.15, 0.15, 0.2), Color(0.2, 0.6, 0.3), Color(0.15, 0.2, 0.5), Color(0.95, 0.25, 0.25), Color(0.95, 0.6, 0.25), Color(0.9, 0.65, 0.3), Color(0.25, 0.65, 0.9)]
-const ENV_C2 := [Color(1.0, 0.94, 0.78), Color(1.0, 0.45, 0.7), Color(1.0, 1.0, 1.0), Color(1.0, 1.0, 1.0), Color(0.3, 0.7, 0.6), Color(1.0, 0.6, 0.8), Color(1.0, 1.0, 1.0), Color(1.0, 1.0, 1.0), Color(0.1, 0.35, 0.2), Color(1.0, 0.85, 0.2), Color(1.0, 0.85, 0.2), Color(0.7, 0.35, 0.1), Color(0.85, 0.2, 0.15), Color(1.0, 0.55, 0.2)]
-const ENV_C3 := [Color(1, 1, 1), Color(1.0, 0.85, 0.5), Color(1, 1, 1), Color(0.1, 0.3, 0.7), Color(1, 1, 1), Color(1, 1, 1), Color(1, 1, 1), Color(0.9, 0.2, 0.2), Color(0.8, 1.0, 0.8), Color(1, 1, 1), Color(0.3, 0.6, 0.95), Color(1.0, 0.85, 0.85), Color(1.0, 0.85, 0.2), Color(1.0, 1.0, 1.0)]
+const ENV_PATTERN := [0, 1, 0, 1, 3, 1, 0, 3, 1, 2, 3, 0, 0, 0]
+const ENV_C1 := [Color("ff5c4d"), Color("3d8bff"), Color("a06bff"), Color("35c98a"), Color("ff9f2e"), Color("ff7aa8"), Color("ffc933"), Color("c04a9a"), Color("2f9a5a"), Color("2d3e8a"), Color("ff5c4d"), Color("ff9f2e"), Color("e0a050"), Color("3d8bff")]
+const ENV_C2 := [Color("ffffff"), Color("ffffff"), Color("ffffff"), Color("ffffff"), Color("ffd95c"), Color("ffffff"), Color("ffffff"), Color("ffe0f2"), Color("ffffff"), Color("ffc933"), Color("ffc933"), Color("ffffff"), Color("d9473f"), Color("ff9f2e")]
+const ENV_C3 := [Color("ffffff"), Color("ffffff"), Color("ffffff"), Color("ffffff"), Color("ffffff"), Color("ffffff"), Color("ffffff"), Color("ffffff"), Color("ffffff"), Color("ffffff"), Color("ffffff"), Color("ffffff"), Color("ffc933"), Color("ffffff")]
 
 const BASKET_NAMES := ["Wicker", "Crate", "Bucket", "Gondola", "Barrel", "Cabin"]
 const BASKET_PRICE := [0, 150, 180, 240, 280, 360]

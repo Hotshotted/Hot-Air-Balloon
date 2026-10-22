@@ -13,6 +13,10 @@ boot_splash/image="res://assets/splash.png"
 boot_splash/fullsize=false
 boot_splash/use_filter=true
 
+[audio]
+
+buses/default_bus_layout="res://default_bus_layout.tres"
+
 [autoload]
 
 Tuning="*res://scripts/Tuning.gd"

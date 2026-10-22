@@ -106,5 +106,35 @@ const engine = new Engine(GODOT_CONFIG);
   });
 }());
 </script>
+<script>
+// Web audio: the browser starts the audio context suspended until a gesture (unlock it on the first tap / key), and a hidden
+// tab, a closed page or a lost focus suspends it again so nothing keeps playing in the background.
+(function () {
+  let unlocked = false;
+  function ctx() {
+    try { return (typeof GodotAudio !== 'undefined' && GodotAudio.ctx) || null; } catch (e) { return null; }
+  }
+  function resume() {
+    const c = ctx();
+    if (unlocked && c && c.state !== 'running') { c.resume(); }
+  }
+  function suspend() {
+    const c = ctx();
+    if (c && c.state === 'running') { c.suspend(); }
+  }
+  function unlock() {
+    unlocked = true;
+    resume();
+  }
+  ['pointerdown', 'touchend', 'mousedown', 'keydown'].forEach(function (ev) {
+    window.addEventListener(ev, unlock, { passive: true });
+  });
+  document.addEventListener('visibilitychange', function () { if (document.hidden) { suspend(); } else { resume(); } });
+  window.addEventListener('pagehide', suspend);
+  window.addEventListener('pageshow', resume);
+  window.addEventListener('blur', suspend);
+  window.addEventListener('focus', resume);
+}());
+</script>
 </body>
 </html>

@@ -85,6 +85,7 @@ func _exit_tree() -> void:
 	if instance == self:
 		instance = null
 
+## The buses come from default_bus_layout.tres (a static layout); this only adds them if that file did not load.
 static func _ensure_buses() -> void:
 	for name in ["SFX", "Music"]:
 		if AudioServer.get_bus_index(name) < 0:
@@ -119,6 +120,15 @@ func play(sound: String, pitch: float = 1.0) -> void:
 	p.stream = _streams[sound]
 	p.pitch_scale = pitch
 	p.play()
+
+## First tap / key of the session (the browser keeps audio locked until a gesture): start whatever music is wanted.
+var unlocked := false
+func unlock() -> void:
+	if unlocked:
+		return
+	unlocked = true
+	if enabled and _music_target > -70.0 and not _music.playing:
+		_music.play()
 
 func play_deflate() -> void:
 	play("deflate")

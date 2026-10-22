@@ -5,12 +5,12 @@ extends Node2D
 ## capped (max_climb_speed / max_sink_speed). Sideways it moves at exactly the wind of the layer it is in (blending over
 ## wind_blend_time when it changes layer). Drawn from pre-built polygons: nothing is allocated while playing.
 
-const WIDTH := 84.0            # design width (before Tuning.balloon_scale)
+const WIDTH := 88.0            # design width (before Tuning.balloon_scale)
 const BASKET_BOTTOM := 84.0    # design distance from the envelope centre (the node origin) to the basket's base
 ## Hit circles in design units: [dy from the origin, radius]. Envelope top, envelope bottom, basket.
-const HIT := [[-10.0, 38.0], [24.0, 22.0], [72.0, 13.0]]
-const NECK_Y := 44.0           # design y of the envelope's neck: the envelope leans about it
-const BASKET_PIVOT := 50.0     # design y where the basket hangs: it swings about it
+const HIT := [[-4.0, 32.0], [32.0, 19.0], [72.0, 11.0]]
+const NECK_Y := 48.0           # design y of the envelope's neck: the envelope leans about it
+const BASKET_PIVOT := 52.0     # design y where the basket hangs: it swings about it
 const PRED_N := 12             # points of each drift-preview line
 const PRED_SUB := 8            # simulation steps between two points
 
@@ -30,6 +30,7 @@ var flame: BalloonFlame
 var streamers: BalloonStreamers
 var passenger: BalloonPassenger
 var _env_mat: ShaderMaterial
+var halo: Sprite2D      # the warm halo behind a hot envelope
 var _flame_on := false
 var air := 0.0           # the temperature of the air in the envelope, 0..1: it follows `heat` up fast and cools slowly
 var flame_power := 0.0   # burner output, 0..1 (what the flame draws)
@@ -63,6 +64,20 @@ var pred_burn := PackedVector2Array()
 var pred_rel := PackedVector2Array()
 
 func _ready() -> void:
+	halo = Sprite2D.new()
+	var gt := GradientTexture2D.new()
+	var gr := Gradient.new()
+	gr.colors = PackedColorArray([Color(1.0, 0.79, 0.2, 0.6), Color(1.0, 0.79, 0.2, 0.0)])
+	gr.offsets = PackedFloat32Array([0.0, 1.0])
+	gt.gradient = gr
+	gt.fill = GradientTexture2D.FILL_RADIAL
+	gt.fill_from = Vector2(0.5, 0.5)
+	gt.fill_to = Vector2(1.0, 0.5)
+	gt.width = 128
+	gt.height = 128
+	halo.texture = gt
+	halo.modulate.a = 0.0
+	add_child(halo)
 	ropes = BalloonRopes.new()
 	ropes.balloon = self
 	add_child(ropes)
@@ -239,6 +254,8 @@ func _update_rig(dt: float) -> void:
 		swing = clampf(swing + _swing_v * h, -0.7, 0.7)
 	_update_passenger(dt)
 	_env_mat.set_shader_parameter("air", air)
+	halo.modulate.a = clampf((air - 0.15) / 0.85, 0.0, 1.0)
+	halo.scale = Vector2.ONE * (2.0 * (62.0 + 40.0 * air) / 128.0)
 	env_node.rotation = lean
 	basket_node.rotation = swing
 	ropes.queue_redraw()
@@ -294,6 +311,7 @@ func deflate_step(dt: float) -> void:
 	env_node.rotation = lean + sin(deflate_t * 9.0) * 0.2 * (1.0 - k)
 	basket_node.rotation = swing + sin(deflate_t * 7.0 + 1.0) * 0.15 * (1.0 - k)
 	_env_mat.set_shader_parameter("air", air)
+	halo.modulate.a = clampf((air - 0.15) / 0.85, 0.0, 1.0)
 	flame.queue_redraw()
 	_update_passenger(dt)
 	ropes.queue_redraw()

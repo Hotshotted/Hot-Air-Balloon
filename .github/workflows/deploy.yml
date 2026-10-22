@@ -85,6 +85,10 @@ jobs:
           grep -c "version.txt" build/web/index.html
           cp assets/fonts/Fredoka.ttf build/web/Fredoka.ttf   # (the loading page's wordmark font)
           grep -q "Clear Prop" build/web/index.html
+          grep -q "visibilitychange" build/web/index.html
+          grep -q "pagehide" build/web/index.html
+          grep -q "suspend()" build/web/index.html
+          grep -q 'default_bus_layout' project.godot
           ! grep -q '\$GODOT_' build/web/index.html
           ls -la build/web
 

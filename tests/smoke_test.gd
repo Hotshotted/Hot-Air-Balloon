@@ -1093,7 +1093,7 @@ func _run() -> void:
 		if CosS.ENV_SHAPE[i] == 0:
 			looks["%d %s %s" % [CosS.ENV_PATTERN[i], CosS.ENV_C1[i].to_html(), CosS.ENV_C2[i].to_html()]] = true
 	check(looks.size() >= 10, "at least 10 envelope patterns / colours (%d)" % looks.size())
-	check(CosS.ENV_NAMES.slice(11) == ["Cat", "Hot Dog", "Fish"] and CosS.ENV_SHAPE.slice(11) == [1, 2, 3], "three novelty envelope shapes: cat head, hot dog, fish")
+	check(CosS.ENV_NAMES.slice(11) == ["Whiskers", "Hot Dog", "Big Fish"] and CosS.ENV_SHAPE.slice(11) == [1, 2, 3], "three novelty envelope shapes: cat head, hot dog, fish")
 	check(CosS.BASKET_NAMES.size() >= 5, "at least 5 basket styles (%d)" % CosS.BASKET_NAMES.size())
 	check(CosS.PASSENGER_NAMES.slice(1) == ["Cat", "Dog", "Fox", "Owl", "Raccoon"], "five animal passengers")
 	check(CosS.ENV_PRICE[0] == 0 and CosS.BASKET_PRICE[0] == 0 and CosS.PASSENGER_PRICE[0] == 0, "item 0 of each category is free")
@@ -2691,6 +2691,21 @@ func _run() -> void:
 	var au_s: int = au.plays["thunk"]
 	m.use_tool(0)
 	check(au.plays["thunk"] == au_s + 1, "the sandbag thumps")
+
+	# ---- 7h. audio plumbing: static buses, first-tap unlock, web shell ----
+	print("7h. audio plumbing")
+	check(ProjectSettings.get_setting("audio/buses/default_bus_layout", "") == "res://default_bus_layout.tres" and FileAccess.file_exists("res://default_bus_layout.tres"), "the bus layout is a static resource")
+	check(AudioServer.get_bus_index("SFX") > 0 and AudioServer.get_bus_index("Music") > 0 and AudioServer.get_bus_count() == 3, "the SFX and Music buses exist from the start (%d buses)" % AudioServer.get_bus_count())
+	var sh_txt := FileAccess.get_file_as_string("res://web/shell.html")
+	check(sh_txt.contains("visibilitychange") and sh_txt.contains("pagehide") and sh_txt.contains("blur") and sh_txt.contains("suspend()") and sh_txt.contains("pointerdown"), "the web shell unlocks audio on the first tap and suspends it when the page is hidden")
+	var au2: Node = load("res://scripts/Sfx.gd").new()
+	root.add_child(au2)
+	check(not au2.unlocked, "audio starts locked")
+	au2.set_music(1)
+	au2.unlock()
+	check(au2.unlocked, "the first tap unlocks it")
+	au2.free()
+	await process_frame
 
 	# ---- 8. restart in place ----
 	print("8. restart in place")

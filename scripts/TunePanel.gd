@@ -26,7 +26,7 @@ const ENTRIES := [
 	["burn_rate", "Propane burn (per s)", 1.0, 30.0, 0.125],
 	["wind_blend_time", "Wind blend on a layer change (s)", 0.0, 1.0, 0.05],
 	["preview_seconds", "Preview length (s)", 0.5, 3.0, 0.1],
-	["balloon_scale", "Balloon size", 0.5, 1.2, 0.05],
+	["balloon_scale", "Balloon size", 0.8, 2.6, 0.05],
 	["hit_forgiveness", "Hitbox size", 0.5, 1.2, 0.05],
 	["layers_base", "Layers at level 1", 3.0, 9.0, 1.0],
 	["wind_base", "Wind speed, level 1 (px/s)", 20.0, 250.0, 5.0],

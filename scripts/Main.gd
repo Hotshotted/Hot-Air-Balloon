@@ -713,6 +713,8 @@ func use_tool(i: int) -> bool:
 
 ## Touches on the tool buttons (handled here so a second finger works while the first holds the burner).
 func _input(event: InputEvent) -> void:
+	if not sfx.unlocked and ((event is InputEventScreenTouch and event.pressed) or (event is InputEventMouseButton and event.pressed) or (event is InputEventKey and event.pressed)):
+		sfx.unlock()
 	if _warming or screen != SCREEN_PLAY or paused:
 		return
 	var pos := Vector2(-1, -1)
