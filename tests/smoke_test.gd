@@ -5,7 +5,7 @@ extends SceneTree
 ##   2. boot: the splash pre-warm draws every shape, lasts long enough, then cleans up; menu is up
 ##   3. balloon: hold to burn, buoyancy lag at half the original response time, capped climb / sink speeds, tethered on
 ##      the ground, sideways speed exactly the wind of its layer (blend only on a layer change), edges wrap / block,
-##      the two-line drift preview, constant winds with labels, pickups that hang still
+##      the debug-only (?preview=on, off by default) two-line drift preview, constant winds with labels, pickups that hang still
 ##   4. hazards: touching one ends the attempt, god mode ignores it, gaps are left alone
 ##   5. propane: drains only while burning, an empty tank kills the burner and a landing ends the run,
 ##      pickups refill (capped) with a pooled burst
@@ -203,9 +203,11 @@ func _run() -> void:
 	check(DebugFlags.start_level == 99, "level clamps")
 	DebugFlags.parse([])
 	check(DebugFlags.summary() == "" and DebugFlags.start_level == 1, "no flags -> empty summary")
-	check(DebugFlags.preview_enabled(), "the drift preview is on by default")
+	check(not DebugFlags.preview_enabled(), "the drift preview is off by default")
+	DebugFlags.parse(["preview=on"])
+	check(DebugFlags.preview_enabled() and DebugFlags.summary().contains("preview=on"), "?preview=on (debug only) switches it on and shows in the stamp")
 	DebugFlags.parse(["preview=off"])
-	check(not DebugFlags.preview_enabled() and DebugFlags.summary().contains("preview=off"), "?preview=off")
+	check(not DebugFlags.preview_enabled(), "...and anything but on stays off")
 	DebugFlags.parse(["controls=drag"])
 	check(DebugFlags.summary().contains("?controls"), "?controls is gone: it is flagged as a typo, whatever its value")
 	DebugFlags.parse([])
@@ -392,12 +394,15 @@ func _run() -> void:
 		if lanes.lane_kind[i] >= 0:
 			hz_ghosts += lanes.lane_count[i]
 	check(lanes.render._pv_dots.visible and lanes.render._pv_dots2.visible and lanes.render._pv_ghosts.visible and lanes.render._pv_ghosts.multimesh.visible_instance_count == hz_ghosts and hz_ghosts > 0, "the preview draws its dots and one ghost per hazard (%d)" % hz_ghosts)
-	DebugFlags.parse(["preview=off"])
-	m.sim(1.0 / 60.0)
-	check(lanes.preview_balloon == null and not lanes.render._pv_dots.visible and not lanes.render._pv_dots2.visible and not lanes.render._pv_ghosts.visible, "?preview=off hides it")
 	DebugFlags.parse([])
 	m.sim(1.0 / 60.0)
-	check(lanes.preview_balloon == b and lanes.render._pv_dots.visible, "...and it is back without the flag")
+	check(lanes.preview_balloon == null and not lanes.render._pv_dots.visible and not lanes.render._pv_dots2.visible and not lanes.render._pv_ghosts.visible, "by default no preview lines or ghost rings are drawn")
+	DebugFlags.parse(["preview=on"])
+	m.sim(1.0 / 60.0)
+	check(lanes.preview_balloon == b and lanes.render._pv_dots.visible and lanes.render._pv_dots2.visible and lanes.render._pv_ghosts.visible, "?preview=on brings them back")
+	DebugFlags.parse([])
+	m.sim(1.0 / 60.0)
+	check(lanes.preview_balloon == null and not lanes.render._pv_ghosts.visible, "...and without the flag they are gone again")
 	# --- constant, readable winds ---
 	var cs_const_all := true
 	var cs_labels_ok := true
@@ -517,6 +522,7 @@ func _run() -> void:
 	step(m, 1.0, 0)
 	check(is_equal_approx(m.fuel, tn.propane_start), "no burn, no drain")
 	step(m, 1.0, 1)
+	check(is_equal_approx(tn.burn_rate, 4.5 * 0.75), "the default burn_rate is the original 4.5 lowered by 25%% (%.3f)" % tn.burn_rate)
 	check(absf(m.fuel - (tn.propane_start - tn.burn_rate)) < 0.5, "burner drains burn_rate per second (%.1f)" % m.fuel)
 	m.fuel = 2.0
 	b.set_altitude(LanesS.BAND_BOTTOM - 2.5 * m.lanes.lane_h)
@@ -2367,7 +2373,18 @@ func _run() -> void:
 	tp.copy_values()
 	check(tp.last_copied_text.contains("buoyancy_lag = 3.5") and tp.last_copied_text.contains("burn_rate = 12.5") and tp.last_copied_text.contains("edge_wrap = false"), "Copy values lists what changed")
 	check(not tp.last_copied_text.contains("climb_speed"), "...and only what changed")
+	var has_all := true
+	for key in ["burn_rate", "propane_start", "propane_refill", "propane_chance"]:
+		has_all = has_all and tp._sliders.has(key)
+	check(has_all, "burn_rate, propane_start, propane_refill and propane_chance all have sliders")
+	tp._sliders["propane_start"].value = 150.0
+	tp._sliders["propane_refill"].value = 35.0
+	tp._sliders["propane_chance"].value = 0.65
+	check(is_equal_approx(tn.propane_start, 150.0) and is_equal_approx(tn.propane_refill, 35.0) and is_equal_approx(tn.propane_chance, 0.65), "the propane sliders edit Tuning live")
+	tp.copy_values()
+	check(tp.last_copied_text.contains("propane_start = 150") and tp.last_copied_text.contains("propane_refill = 35") and tp.last_copied_text.contains("propane_chance = 0.65") and tp.last_copied_text.contains("burn_rate = 12.5"), "Copy values lists all four propane settings")
 	tp.reset_defaults()
+	check(is_equal_approx(tn.propane_start, 100.0) and is_equal_approx(tn.burn_rate, 3.375) and is_equal_approx(tn.propane_chance, 0.4), "Reset puts them back (burn_rate 3.375)")
 	check(is_equal_approx(tn.buoyancy_lag, 4.0) and tn.edge_wrap and tp.changed_text() == "(no changes)", "Reset restores the defaults")
 	tp.close()
 	check(not tp.is_open and not paused, "closing resumes")

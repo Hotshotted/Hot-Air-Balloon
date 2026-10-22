@@ -27,12 +27,12 @@ var cool_rate := 2.2
 var max_climb_speed := 320.0
 var max_sink_speed := 280.0
 ## Propane burned per second while the burner fires.
-var burn_rate := 4.5
+var burn_rate := 3.375   # (the original 4.5, 25% lower)
 ## The balloon's sideways speed is exactly its layer's wind; it blends to a new layer's wind over wind_blend_time seconds.
 var wind_blend_time := 0.25
 ## true: leaving one side of the screen brings the balloon back on the other. false: the edges block.
 var edge_wrap := true
-## ?preview: two faint dotted lines show where the balloon will be in preview_seconds if it keeps burning / if it lets go
+## ?preview=on (debug only, off by default): two faint dotted lines show where the balloon will be in preview_seconds if it keeps burning / if it lets go
 ## now, the ghost rings where the hazards will be.
 var preview_seconds := 1.5
 ## Balloon size multiplier, and how much of its drawn size counts for collisions (0.85 = forgiving).

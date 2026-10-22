@@ -23,7 +23,7 @@ const ENTRIES := [
 	["sink_speed", "Sink speed (px/s)", 30.0, 300.0, 5.0],
 	["max_climb_speed", "Max climb speed (px/s)", 200.0, 600.0, 10.0],
 	["max_sink_speed", "Max sink speed (px/s)", 100.0, 600.0, 10.0],
-	["burn_rate", "Propane burn (per s)", 1.0, 30.0, 0.5],
+	["burn_rate", "Propane burn (per s)", 1.0, 30.0, 0.125],
 	["wind_blend_time", "Wind blend on a layer change (s)", 0.0, 1.0, 0.05],
 	["preview_seconds", "Preview length (s)", 0.5, 3.0, 0.1],
 	["balloon_scale", "Balloon size", 0.5, 1.2, 0.05],

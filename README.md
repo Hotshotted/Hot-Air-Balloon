@@ -15,11 +15,11 @@ A Frogger-style hot air balloon game (working title). Side view, low-poly shapes
 
 - **Hold anywhere** (finger / mouse / Space / Up) to fire the burner and rise; **release** to sink. The air takes a moment to heat and cool and the climb speed follows the heat with a buoyancy lag, tuned at **half the original response time** (`buoyancy_lag` 4.0, `heat_rate` 3.6, `cool_rate` 2.2) so the balloon feels weighty, not sluggish.
 - **Speed caps:** the balloon never rises faster than `max_climb_speed` (320 px/s) nor sinks faster than `max_sink_speed` (280 px/s), whatever the burner, a thermal, the Sandbag or the Quick Vent add.
-- **Propane:** the burner burns `burn_rate` per second while it fires; what is left carries into the next leg.
+- **Propane:** the burner burns `burn_rate` (3.375, the original 4.5 less 25%) per second while it fires; what is left carries into the next leg.
 - **Wind:** constant per layer (labelled with arrows and px/s); the balloon's sideways speed is exactly its layer's wind.
 - **Tools** (Sandbag, Anchor, Quick Vent): see below. The Quick Vent is the vent button for a faster descent.
 - **Hard landing** (Precision Landing): touching the deck at more than `land_speed` (170 px/s) fails the leg. The plain sink (90 px/s) is gentle; only a Quick Vent plunge is fast enough, so it suits the physics.
-- **Drift preview** (`?preview=off` hides it): two faint dotted lines show where the balloon will be in the next `preview_seconds` (1.5 s) - an orange one if you keep burning, a white one if you release now - and a faint ring shows where each hazard will be at the same moment. Pickups (propane, coins, stars) hang still; the balloon sweeps past them.
+- **Drift preview (debug only):** `?preview=on` shows two faint dotted lines for the next `preview_seconds` (1.5 s) - an orange one if you keep burning, a white one if you release now - and a faint ring where each hazard will be at the same moment. It is off by default and never shown to players. Pickups (propane, coins, stars) hang still; the balloon sweeps past them.
 - The swipe-lanes build and the earlier drag / steady trials are gone from the code; they live in git history (`fed980e` swipe lanes, `56f8233` the three-scheme trial). The original buoyancy physics is `195f0a4`.
 - **Fairness checks:** `tests/smoke_test.gd` (CI) checks the mechanics and the propane / storm / lightning budgets of every Flight; `tests/fairness_sim.gd` (offline, tens of minutes) is a planner that searches the real generated layouts for *any* clear path under the burner physics (see its header for what it does and does not prove).
 
@@ -112,7 +112,7 @@ Everything that repeats is pooled in fixed arrays, built once and drawn during t
 | --- | --- |
 | `?perf` | rolling frame-time graph, worst-frame readout, script time per frame, hitch log, sim-vs-wall clock |
 | `?tune` | TUNE button (top-right): live sliders for buoyancy, burner, speed caps, winds, hazard density, propane...; **Copy values** puts the changed values on the clipboard |
-| `?preview=off` | hide the drift preview (dotted path + hazard ghosts) |
+| `?preview=on` | debug: show the drift preview (two dotted paths + hazard ghosts); off by default |
 | `?level=N` | start at level N |
 | `?god` | hazards cannot hurt |
 | `?unlockall` | every region and Flight is open (not saved: drop the flag and the save decides again) |

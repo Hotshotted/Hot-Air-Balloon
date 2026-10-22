@@ -7,7 +7,7 @@ extends RefCounted
 ##   ?tune           show the on-screen tuning panel (TUNE button, top-right)
 ##   ?level=N        start at level N
 ##   ?god            nothing can hurt the balloon (to look at hazards)
-##   ?preview=off    switch the drift preview (dotted path + ghost hazards) off
+##   ?preview=on     debug only: show the drift preview (two dotted paths + ghost hazards). Off by default, never shown to players
 ##   ?unlockall      every region and Flight is open (not saved: drop the flag and the save decides again)
 ## Combine with "&", e.g.  ?perf&level=5&god
 ## The active flags are printed under the build stamp.
@@ -20,7 +20,7 @@ static var tune := false
 static var start_level := 1
 static var god := false
 static var unlockall := false
-static var preview := true
+static var preview := false
 
 static func prewarm_enabled() -> bool:
 	_load()
@@ -58,8 +58,8 @@ static func summary() -> String:
 		parts.append("god")
 	if unlockall:
 		parts.append("unlockall")
-	if not preview:
-		parts.append("preview=off")
+	if preview:
+		parts.append("preview=on")
 	for b in _bad:
 		parts.append("?" + b)
 	return " ".join(parts)
@@ -87,7 +87,7 @@ static func parse(args: Array[String]) -> void:
 	start_level = 1
 	god = false
 	unlockall = false
-	preview = true
+	preview = false
 	for a in args:
 		var kv := a.split("=", true, 1)
 		var key := kv[0].uri_decode().to_lower()
@@ -106,7 +106,7 @@ static func parse(args: Array[String]) -> void:
 			"unlockall":
 				unlockall = true
 			"preview":
-				preview = not (val in ["off", "0", "false", "no"])
+				preview = val in ["on", "1", "true", "yes"]
 			"v":
 				pass  # cache-busting parameter added by the page, not a flag
 			_:

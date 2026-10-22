@@ -236,8 +236,9 @@ func _prewarm() -> void:
 			lanes.burst(Vector2(780, 900), Color(1.0, 0.5, 0.15), 12, 300.0)
 		balloon.heat = 1.0
 		balloon.queue_redraw()
-		lanes.preview_balloon = balloon   # (warms the preview's meshes too)
-		balloon.predict(fuel > 0.0)
+		if DebugFlags.preview_enabled():   # (warms the debug preview's meshes too)
+			lanes.preview_balloon = balloon
+			balloon.predict(true)
 		hud.shop.prewarm_show(shop_tick % 26)
 		shop_tick += 1
 		lanes.update(minf(get_process_delta_time(), 0.05))
