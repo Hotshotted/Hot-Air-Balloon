@@ -22,16 +22,16 @@ func _draw() -> void:
 	var c_low: Color = Regions.SKY_LOW[L.region]
 	var c_mid: Color = Regions.SKY_MID[L.region]
 	var c_high: Color = Regions.SKY_HIGH[L.region]
-	draw_rect(Rect2(0, 0, Lanes.W, Lanes.BAND_TOP), Regions.SKY_TOP[L.region])
-	draw_rect(Rect2(0, Lanes.BAND_BOTTOM, Lanes.W, Lanes.H - Lanes.BAND_BOTTOM), c_low)
+	draw_rect(Rect2(0, 0, Lanes.W, Lanes.BAND_TOP), L.tinted(Regions.SKY_TOP[L.region], Lanes.BAND_TOP * 0.5))
+	draw_rect(Rect2(0, Lanes.BAND_BOTTOM, Lanes.W, Lanes.H - Lanes.BAND_BOTTOM), L.tinted(c_low, Lanes.BAND_BOTTOM + 100.0))
 	for i in L.n_lanes:
 		var t := (float(i) + 0.5) / float(L.n_lanes)
 		var col := c_low.lerp(c_mid, minf(t * 2.0, 1.0)) if t < 0.5 else c_mid.lerp(c_high, (t - 0.5) * 2.0)
 		if i % 2 == 1:
 			col = col.lightened(0.07)
-		draw_rect(Rect2(0, Lanes.BAND_BOTTOM - float(i + 1) * L.lane_h, Lanes.W, L.lane_h + 1.0), col)
+		draw_rect(Rect2(0, Lanes.BAND_BOTTOM - float(i + 1) * L.lane_h, Lanes.W, L.lane_h + 1.0), L.tinted(col, Lanes.BAND_BOTTOM - (float(i) + 0.5) * L.lane_h))
 	if L.region == 2:   # the Sahara sun
 		var sun := Lanes._octagon(Vector2(880, 1500), 70.0, 70.0)
-		draw_colored_polygon(PackedVector2Array(sun), Color(1.0, 0.84, 0.3))
+		draw_colored_polygon(PackedVector2Array(sun), L.tinted(Color(1.0, 0.84, 0.3), 1500.0))
 		sun.append(sun[0])
 		draw_polyline(PackedVector2Array(sun), Lanes.FX_BLACK, 4.0)

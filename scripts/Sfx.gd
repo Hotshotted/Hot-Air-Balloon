@@ -10,7 +10,7 @@ extends Node
 const RATE := 11025            # effects
 const LOOP_RATE := 8000        # loops (lo-fi on purpose)
 const POOL := 8
-const NAMES := ["press", "tap", "back", "toggle", "buy", "error", "whoosh", "unlock", "star", "slam", "coin", "pickup", "thunk", "deflate", "cheer"]
+const NAMES := ["press", "tap", "back", "toggle", "buy", "error", "whoosh", "unlock", "star", "slam", "coin", "pickup", "thunk", "deflate", "cheer", "creak", "thunder", "anchor", "vent", "warn"]
 const BEAT := 0.6              # music: seconds per beat, 8 beats per loop
 const FADE_DB_PER_S := 60.0
 const MENU_DB := -17.0
@@ -26,6 +26,30 @@ var _next := 0
 var _music: AudioStreamPlayer
 var _music_db := -80.0
 var _music_target := -80.0
+# The flight's living sounds: a burner roar that follows the flame, wind that changes with the layer's speed, a storm rumble
+var _burner: AudioStreamPlayer
+var _wind: AudioStreamPlayer
+var _rumble: AudioStreamPlayer
+var _burner_db := -80.0
+var _wind_db := -80.0
+var _rumble_db := -80.0
+var _t_burner := -80.0
+var _t_wind := -80.0
+var _t_rumble := -80.0
+var _wind_pitch := 1.0
+var _t_wind_pitch := 1.0
+var _burner_pitch := 1.0
+var _creak_cd := 0.0
+## What the loops are doing right now (for the tests): target levels in dB (-80 = silent).
+var burner_target: float:
+	get:
+		return _t_burner
+var wind_target: float:
+	get:
+		return _t_wind
+var rumble_target: float:
+	get:
+		return _t_rumble
 
 ## Play a UI / one-shot sound from anywhere (silently nothing if the audio is not up).
 static func ui(sound: String, pitch: float = 1.0) -> void:
@@ -47,6 +71,15 @@ func _ready() -> void:
 	_music = _player("Music")
 	_music.stream = _music_loop()
 	_music.volume_db = -80.0
+	_burner = _player("SFX")
+	_burner.stream = _wav(_roar_loop(), LOOP_RATE, true)
+	_burner.volume_db = -80.0
+	_wind = _player("SFX")
+	_wind.stream = _wav(_wind_loop(), LOOP_RATE, true)
+	_wind.volume_db = -80.0
+	_rumble = _player("SFX")
+	_rumble.stream = _wav(_rumble_loop(), LOOP_RATE, true)
+	_rumble.volume_db = -80.0
 
 func _exit_tree() -> void:
 	if instance == self:
@@ -100,9 +133,43 @@ var music_mode_db: float:
 	get:
 		return _music_target
 
+## Every frame of a flight: `power` the burner output 0..1 (`sputter` < 1 while it lights), `wind` the layer's wind at the balloon
+## (px/s, signed), `swing_v` how fast the basket swings, `storm` the storm / thunder is near. Everything glides (no clicks).
+func fly(dt: float, power: float, sputter: float, wind: float, swing_v: float, storm: bool) -> void:
+	_t_burner = lerpf(-60.0, -8.0, pow(clampf(power, 0.0, 1.0), 0.8)) if power > 0.03 else -80.0
+	_t_burner -= (1.0 - sputter) * 18.0
+	_burner_pitch = 0.82 + 0.34 * power
+	var k := clampf(absf(wind) / 260.0, 0.0, 1.0)
+	_t_wind = lerpf(-46.0, -16.0, pow(k, 0.7)) if k > 0.01 else -80.0
+	_t_wind_pitch = 0.65 + 0.9 * k
+	_t_rumble = -22.0 if storm else -80.0
+	_creak_cd -= dt
+	if absf(swing_v) > 1.6 and _creak_cd <= 0.0:
+		_creak_cd = randf_range(0.7, 1.4)
+		play("creak", randf_range(0.8, 1.25))
+
+## Silence the flight loops (pause, menus, the failed screen): they fade out.
+func quiet() -> void:
+	_t_burner = -80.0
+	_t_wind = -80.0
+	_t_rumble = -80.0
+
 func _process(delta: float) -> void:
 	if not enabled:
 		return
+	_burner_db = move_toward(_burner_db, _t_burner, 140.0 * delta)
+	_wind_db = move_toward(_wind_db, _t_wind, 40.0 * delta)
+	_rumble_db = move_toward(_rumble_db, _t_rumble, 40.0 * delta)
+	_wind_pitch = move_toward(_wind_pitch, _t_wind_pitch, 1.2 * delta)
+	for pair in [[_burner, _burner_db], [_wind, _wind_db], [_rumble, _rumble_db]]:
+		var pl: AudioStreamPlayer = pair[0]
+		pl.volume_db = pair[1]
+		if pair[1] > -75.0 and not pl.playing:
+			pl.play()
+		elif pair[1] <= -75.0 and pl.playing:
+			pl.stop()
+	_burner.pitch_scale = _burner_pitch
+	_wind.pitch_scale = _wind_pitch
 	_music_db = move_toward(_music_db, _music_target, FADE_DB_PER_S * delta)
 	_music.volume_db = _music_db
 	if _music.playing and _music_db <= -75.0 and _music_target <= -70.0:
@@ -125,6 +192,11 @@ func _build_effects() -> void:
 	_streams["pickup"] = _wav(_seq([[660.0, 0.05, 0.4], [990.0, 0.05, 0.4], [1320.0, 0.14, 0.4]], RATE, 0.5, false, true), RATE)
 	_streams["deflate"] = _wav(_mix(_sweep(520.0, 90.0, 0.9, 0.5, RATE), _sweep(300.0, 60.0, 1.1, 0.4, RATE)), RATE)
 	_streams["cheer"] = _wav(_seq([[660.0, 0.08, 0.4], [880.0, 0.08, 0.4], [1100.0, 0.18, 0.4]], RATE, 0.5, false, true), RATE)
+	_streams["creak"] = _wav(_creak(0.28, RATE), RATE)
+	_streams["thunder"] = _wav(_thunder(1.6, RATE), RATE)
+	_streams["anchor"] = _wav(_mix(_seq([[196.0, 0.12, 0.45], [147.0, 0.2, 0.4]], RATE, 0.4, true), _sweep(90.0, 50.0, 0.25, 0.6, RATE)), RATE)
+	_streams["vent"] = _wav(_whoosh(0.5, RATE), RATE)
+	_streams["warn"] = _wav(_seq([[880.0, 0.06, 0.3], [660.0, 0.08, 0.3]], RATE, 0.7, true), RATE)
 	_streams["thunk"] = _wav(_sweep(200.0, 60.0, 0.2, 0.7, RATE), RATE)
 
 ## Notes [[hz, seconds, volume], ...] one after another with a short decay each. `square` = hollow tone, `bell` = a slow
@@ -170,6 +242,75 @@ func _whoosh(secs: float, rate: int) -> PackedFloat32Array:
 		var k := float(i) / count
 		lp += (noise - lp) * lerpf(0.05, 0.5, sin(PI * k))
 		out[i] = lp * sin(PI * k) * 0.5
+	return out
+
+## Noise through a one-pole low-pass (`a` = how open: small = dull), made to loop seamlessly by crossfading its ends.
+func _noise_loop(secs: float, a: float, hum: float, hum_hz: float) -> PackedFloat32Array:
+	var count := int(secs * LOOP_RATE)
+	var out := PackedFloat32Array()
+	out.resize(count)
+	var seed_v := 4242
+	var lp := 0.0
+	for i in count:
+		seed_v = (seed_v * 1103515245 + 12345) & 0x7fffffff
+		var noise := float(seed_v) / 1073741823.5 - 1.0
+		lp += (noise - lp) * a
+		var t := float(i) / LOOP_RATE
+		out[i] = lp + hum * sin(TAU * hum_hz * t)
+	var fade := int(count * 0.12)
+	for i in fade:   # blend the tail into the head so the loop has no seam
+		var k := float(i) / fade
+		out[count - fade + i] = lerpf(out[count - fade + i], out[i], k)
+	var peak := 0.001
+	for v in out:
+		peak = maxf(peak, absf(v))
+	for i in count:
+		out[i] = out[i] / peak * 0.7
+	return out
+
+func _roar_loop() -> PackedFloat32Array:
+	var o := _noise_loop(1.5, 0.22, 0.25, 62.5)
+	for i in o.size():   # a flutter in the flame
+		o[i] *= 0.82 + 0.18 * sin(TAU * 7.0 * float(i) / LOOP_RATE)
+	return o
+
+func _wind_loop() -> PackedFloat32Array:
+	var o := _noise_loop(3.0, 0.1, 0.0, 1.0)
+	for i in o.size():   # slow gusting
+		o[i] *= 0.75 + 0.25 * sin(TAU * 0.667 * float(i) / LOOP_RATE)
+	return o
+
+func _rumble_loop() -> PackedFloat32Array:
+	return _noise_loop(2.0, 0.04, 0.3, 40.0)
+
+## A wooden creak: a falling, wobbling tone with a rasp.
+func _creak(secs: float, rate: int) -> PackedFloat32Array:
+	var count := int(secs * rate)
+	var out := PackedFloat32Array()
+	out.resize(count)
+	var ph := 0.0
+	var seed_v := 99
+	for i in count:
+		var k := float(i) / count
+		ph += TAU * (210.0 - 70.0 * k + 18.0 * sin(k * 60.0)) / rate
+		seed_v = (seed_v * 1103515245 + 12345) & 0x7fffffff
+		var rasp := (float(seed_v) / 1073741823.5 - 1.0) * 0.25
+		out[i] = (signf(sin(ph)) * 0.35 + rasp) * sin(PI * k) * 0.55
+	return out
+
+## Thunder: a crack, then a long low roll.
+func _thunder(secs: float, rate: int) -> PackedFloat32Array:
+	var count := int(secs * rate)
+	var out := PackedFloat32Array()
+	out.resize(count)
+	var seed_v := 31337
+	var lp := 0.0
+	for i in count:
+		seed_v = (seed_v * 1103515245 + 12345) & 0x7fffffff
+		var noise := float(seed_v) / 1073741823.5 - 1.0
+		var k := float(i) / count
+		lp += (noise - lp) * lerpf(0.5, 0.05, minf(k * 3.0, 1.0))
+		out[i] = lp * (exp(-k * 3.2) + 0.5 * exp(-pow((k - 0.18) * 8.0, 2.0))) * 0.9
 	return out
 
 func _mix(a: PackedFloat32Array, b: PackedFloat32Array) -> PackedFloat32Array:

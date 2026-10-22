@@ -43,6 +43,8 @@ var pops: Array = []                        # [flight id, star index, seconds si
 func _ready() -> void:
 	size = Vector2(Lanes.W, Lanes.H)
 	mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(Ui.card(Vector2(18, 14), Vector2(380, 76), Style.SURFACE_DARK, Style.R_PILL))   # the readouts sit on dark pills: the parchment is light
+	add_child(Ui.card(Vector2(428, 14), Vector2(380, 76), Style.SURFACE_DARK, Style.R_PILL))
 	add_child(Ui.icon("coin", 52, Vector2(30, 26)))
 	coins_label = Ui.label("", 40, HORIZONTAL_ALIGNMENT_LEFT, Vector2(92, 28), Vector2(340, 56))
 	coins_label.add_theme_color_override("font_color", Ui.COL_GOLD)

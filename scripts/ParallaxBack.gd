@@ -69,16 +69,16 @@ func draw_layer(ci: CanvasItem, layer: int) -> void:
 		return
 	var r := lanes.region
 	var gy := Lanes.GROUND_Y
-	var hmax: float = HEIGHTS[layer] * (1.25 if r == 3 else (0.7 if r == 2 else (0.8 if r == 0 else 1.0)))
+	var hmax: float = HEIGHTS[layer] * (1.25 if r == 3 else (0.95 if r == 2 else (0.8 if r == 0 else 1.0)))
 	var sky: Color = Regions.SKY_LOW[r]
 	var far_col: Color = Regions.PEAK_B[r]
 	var near_col: Color = Regions.PEAK_A[r]
 	var base: Color
 	match layer:
 		0:
-			base = sky.lerp(far_col, 0.38)
+			base = sky.lerp(far_col, 0.55 if r == 2 else 0.38)
 		1:
-			base = sky.lerp(far_col, 0.7)
+			base = sky.lerp(far_col, 0.9 if r == 2 else 0.7)
 		_:
 			base = near_col
 	var step := STEP if (r == 0 or r == 2) else Lanes.W / float(((3 + layer * 2) if r == 1 else (3 + layer)) * 8)
@@ -92,7 +92,7 @@ func draw_layer(ci: CanvasItem, layer: int) -> void:
 		line.append(Vector2(x, y))
 	poly.append(Vector2(Lanes.W * 2.0, gy + 2.0))
 	poly.append(Vector2(0.0, gy + 2.0))
-	ci.draw_colored_polygon(poly, base)
+	ci.draw_colored_polygon(poly, lanes.tinted(base, gy - hmax * 0.5))
 	var edge := Color(0, 0, 0, [0.3, 0.5, 1.0][layer])
 	ci.draw_polyline(line, edge, [3.0, 3.5, 4.0][layer])
 	# per-region details

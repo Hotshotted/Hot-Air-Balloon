@@ -109,8 +109,10 @@ otherwise.
   Countryside rolling hills with field furrows, Alps jagged peaks with snow, Sahara lopsided dunes with a lit crest,
   Himalayas tall ridges in violet haze. Far layers are tinted toward the sky and have a fainter outline; the near layer
   keeps the full black outline. They drift opposite to the wind of the balloon's layer at 5 %, 11 % and 20 % of its speed.
-- **Time of day**: the five legs of a Flight run dawn (warm wash) -> midday (clear) -> dusk (violet wash), one full-screen
-  gradient over the scenery that is strongest at the horizon. It never covers hazards, pickups or the HUD.
+- **Time of day**: the five legs of a Flight run dawn (warm wash) -> midday (clear) -> dusk (violet wash), a wash baked into the
+  colours of the sky, ridges and scenery when the leg is drawn (strongest at the horizon), so it costs nothing per frame and
+  never touches hazards, pickups or the HUD.
 - **Hazards** are the loudest things in the sky: black outlines, saturated fills (a slight saturation boost in the shader).
 - **Feedback**: pickups, handoffs and landings burst squares *and* an expanding outlined ring; the passenger cheers; a crash
   empties the envelope (squash, flutter), drops the basket and droops the passenger instead of vanishing.
+- **Readouts on light surfaces** (the world map's parchment) sit on dark pills; white or gold text is never set straight on parchment.

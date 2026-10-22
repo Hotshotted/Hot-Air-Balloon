@@ -49,6 +49,7 @@ var tool_charges := PackedInt32Array([0, 0, 0])   # sandbag, anchor, quick vent:
 const CONTROL_HINT := "HOLD anywhere to fire the burner and rise. Let go to sink."
 var _hinted := false
 var sfx: Sfx
+var _lt_prev := 0
 var paused := false                 # the pause menu is up: the world stands still
 var burn_override := -1             # tests: 1 = burner held, 0 = released, -1 = read the real input
 var tool_avail: Array = []         # the tools this Flight offers
@@ -166,6 +167,7 @@ func pause_game() -> void:
 	if screen != SCREEN_PLAY or paused or _warming:
 		return
 	paused = true
+	sfx.quiet()
 	hud.show_pause()
 
 func resume_game() -> void:
@@ -389,6 +391,7 @@ func _update_progress() -> void:
 ## The Flight ends here: a failed leg (crash, or stranded without propane). Coins already earned are kept.
 func _fail(reason: String) -> void:
 	screen = SCREEN_DEAD
+	sfx.quiet()
 	last_reason = reason
 	last_stars = 0
 	_credit()
@@ -552,6 +555,7 @@ func sim(dt: float) -> void:
 			lanes.preview_balloon = null
 			lanes.update(dt)
 			balloon.idle_step(dt)
+			sfx.quiet()
 			clear_left -= dt
 			if clear_left <= 0.0:
 				_begin_leg()
@@ -559,6 +563,7 @@ func sim(dt: float) -> void:
 			lanes.preview_balloon = null
 			lanes.update(dt)
 			balloon.idle_step(dt)
+			sfx.quiet()
 
 func _play(dt: float) -> void:
 	lanes.focus_lane = lanes.lane_of(balloon.position.y)
@@ -570,6 +575,13 @@ func _play(dt: float) -> void:
 	var climb_mult := lanes.climb_mult_at(balloon.position.y)
 	var hold := _holding()
 	balloon.step(dt, hold, fuel > 0.0, lanes.thermal_lift(balloon.position.x), climb_mult)
+	sfx.fly(dt, balloon.flame_power, balloon.sputter, balloon.wind_alt, balloon._swing_v, lanes.storm_on and lanes.storm_go)
+	if lanes.lt_state != _lt_prev:
+		_lt_prev = lanes.lt_state
+		if lanes.lt_state == 1:
+			sfx.play("warn")
+		elif lanes.lt_state == 2:
+			sfx.play("thunder")
 	if lanes.thin_air:
 		var pct := int(climb_mult * 100.0)
 		if pct != _air_pct:
@@ -687,11 +699,14 @@ func use_tool(i: int) -> bool:
 	match i:
 		0:
 			balloon.use_sandbag()
+			sfx.play("thunk")
 			lanes.burst(balloon.position + Vector2(0, 70), Color(0.85, 0.7, 0.4), 8, 240.0)
 		1:
 			balloon.use_anchor()
+			sfx.play("anchor")
 		2:
 			balloon.use_vent()
+			sfx.play("vent", 1.3)
 			lanes.burst(balloon.position + Vector2(0, -50), Color(1, 1, 1), 8, 200.0)
 	_sync_tools()
 	return true

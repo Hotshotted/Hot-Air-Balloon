@@ -13,7 +13,7 @@ func _draw() -> void:
 	draws += 1
 	var L := lanes
 	for s in L._scn[L.region]:
-		draw_colored_polygon(s[0], s[2])
+		draw_colored_polygon(s[0], L.tinted(s[2], Lanes.GROUND_Y - 40.0))
 		draw_polyline(s[1], Lanes.FX_BLACK, 4.0)
 	for i in L.n_lanes:   # the cables the cable cars hang from
 		if L.lane_kind[i] == Lanes.CABLE:

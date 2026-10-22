@@ -23,7 +23,7 @@ func _initialize() -> void:
 	var LanesS = load("res://scripts/Lanes.gd")
 	var FlightsS = load("res://scripts/Flights.gd")
 	var m = load("res://scenes/main.tscn").instantiate()
-	DebugFlags.parse(["controls=steady"])   # (flying by holding; the wind labels and the drift preview are drawn in every scheme)
+	DebugFlags.parse([])
 	root.add_child(m)
 	await create_timer(0.3).timeout
 	while m._warming:   # (the start-up pre-warm must be over: it draws everything at once)

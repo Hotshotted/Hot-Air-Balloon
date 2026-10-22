@@ -1,8 +1,36 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
-<rect width="128" height="128" rx="16" fill="#5ba7f0"/>
-<polygon points="64,12 94,26 100,52 84,76 44,76 28,52 34,26" fill="#ff7a2e" stroke="#000" stroke-width="5" stroke-linejoin="round"/>
-<polygon points="64,12 78,20 80,76 48,76 50,20" fill="#fff6e0" stroke="#000" stroke-width="4" stroke-linejoin="round"/>
-<rect x="52" y="92" width="24" height="18" fill="#8a5a2b" stroke="#000" stroke-width="5"/>
-<line x1="50" y1="76" x2="54" y2="92" stroke="#000" stroke-width="4"/>
-<line x1="78" y1="76" x2="74" y2="92" stroke="#000" stroke-width="4"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2459c4"/>
+      <stop offset="0.7" stop-color="#3d8bff"/>
+      <stop offset="1" stop-color="#9fd0ff"/>
+    </linearGradient>
+    <path id="env" d="M256 56 C366 56 420 138 408 222 C400 290 338 338 306 376 L206 376 C174 338 112 290 104 222 C92 138 146 56 256 56 Z"/>
+    <clipPath id="envclip"><use href="#env"/></clipPath>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#sky)"/>
+  <rect x="3" y="3" width="506" height="506" rx="110" fill="none" stroke="#0a1020" stroke-width="6"/>
+  <!-- clouds -->
+  <g fill="#fff" stroke="#0a1020" stroke-width="9" stroke-linejoin="round">
+    <path d="M40 440 q10-34 46-30 q18-28 56-10 q30-8 34 40z" opacity=".95"/>
+    <path d="M330 470 q8-28 40-24 q16-24 50-8 q26-4 30 32z" opacity=".95"/>
+  </g>
+  <!-- envelope with panels -->
+  <use href="#env" fill="#ff7a2e"/>
+  <g clip-path="url(#envclip)">
+    <path d="M256 50 C300 90 316 160 308 380 L204 380 C196 160 212 90 256 50Z" fill="#fff2d6"/>
+    <path d="M256 50 C226 100 150 170 160 380 L204 380 C196 160 212 90 256 50Z" fill="#ffc933"/>
+    <path d="M256 50 C286 100 362 170 352 380 L308 380 C316 160 300 90 256 50Z" fill="#ffc933"/>
+    <path d="M256 50 C214 130 134 190 104 300 M256 50 C298 130 378 190 408 300" fill="none" stroke="#0a1020" stroke-width="7" opacity=".28"/>
+    <path d="M256 50 V380" stroke="#0a1020" stroke-width="7" opacity=".22"/>
+    <path d="M330 110 C390 150 410 240 372 320 L420 330 L420 90Z" fill="#0a1020" opacity=".12"/>
+    <path d="M150 150 C170 108 205 84 238 76" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round" opacity=".6"/>
+  </g>
+  <use href="#env" fill="none" stroke="#0a1020" stroke-width="14" stroke-linejoin="round"/>
+  <!-- ropes, burner flame, basket -->
+  <path d="M214 376 L232 424 M298 376 L280 424" stroke="#0a1020" stroke-width="10" stroke-linecap="round"/>
+  <path d="M256 404 C236 392 244 372 256 352 C268 372 276 392 256 404Z" fill="#ffc933" stroke="#0a1020" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M256 400 C246 392 250 380 256 370 C262 380 266 392 256 400Z" fill="#fff6c8"/>
+  <path d="M222 424 H290 L282 478 H230 Z" fill="#b8793c" stroke="#0a1020" stroke-width="12" stroke-linejoin="round"/>
+  <path d="M228 442 H284 M230 460 H282" stroke="#0a1020" stroke-width="6" opacity=".4"/>
 </svg>

@@ -221,6 +221,20 @@ func _build_scenery() -> void:
 		_scn_add(list, [Vector2(430, gy), Vector2(650, gy), Vector2(650, gy + 22), Vector2(430, gy + 22)], Color(0.55, 0.57, 0.62))
 		_scn.append(list)
 
+## The time-of-day wash for this leg: rgb = the colour, a = the strength at the horizon (0 at midday). Baked into the colours the
+## backdrop, the ridges and the scenery are drawn with (they are drawn once per leg), so it costs nothing per frame.
+func day_tint() -> Color:
+	var k := 0.55 if region == 2 else 1.0
+	if daylight < 0.5:
+		return Color(1.0, 0.62, 0.42, lerpf(0.26, 0.0, daylight * 2.0) * k)
+	return Color(0.62, 0.36, 0.74, lerpf(0.0, 0.26, (daylight - 0.5) * 2.0) * k)
+
+## `c` washed by the day tint at height y (stronger toward the horizon, like the old overlay gradient).
+func tinted(c: Color, y: float) -> Color:
+	var t := day_tint()
+	var a := t.a * lerpf(0.45, 1.0, clampf(y / H, 0.0, 1.0))
+	return Color(lerpf(c.r, t.r, a), lerpf(c.g, t.g, a), lerpf(c.b, t.b, a), c.a)
+
 func _scn_add(list: Array, pts: Array, fill: Color) -> void:
 	var p := _pair(pts)
 	list.append([p[0], p[1], fill])

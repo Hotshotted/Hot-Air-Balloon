@@ -2625,13 +2625,13 @@ func _run() -> void:
 	check(pl_px.get_child(0).position.x - pl_x0 != pl_px.get_child(2).position.x - pl_x0, "...the near layers faster than the far ones")
 	m.lanes.daylight = 0.0
 	m.lanes.setup(3.0, false, 50, 0)
-	var pl_dawn: Color = m.lanes.render._day_mat.get_shader_parameter("tint")
+	var pl_dawn: Color = m.lanes.day_tint()
 	m.lanes.daylight = 0.5
 	m.lanes.setup(3.0, false, 50, 0)
-	var pl_noon: Color = m.lanes.render._day_mat.get_shader_parameter("tint")
+	var pl_noon: Color = m.lanes.day_tint()
 	m.lanes.daylight = 1.0
 	m.lanes.setup(3.0, false, 50, 0)
-	var pl_dusk: Color = m.lanes.render._day_mat.get_shader_parameter("tint")
+	var pl_dusk: Color = m.lanes.day_tint()
 	check(pl_dawn.a > 0.15 and pl_noon.a < 0.01 and pl_dusk.a > 0.15 and pl_dawn.r > pl_dusk.r, "dawn is a warm wash, midday clear, dusk a violet one")
 	# feedback: pickups ring, a handoff rings and cheers, a crash deflates (and nothing allocates: the rings are pooled)
 	m.start_flight(0)
@@ -2652,6 +2652,45 @@ func _run() -> void:
 	check(m.balloon.env_node.scale.y < 0.7 and m.balloon.position.y > pl_y0 and m.balloon.pass_sad > 0.5, "...the envelope empties (%.2f), the basket sinks and the passenger droops" % m.balloon.env_node.scale.y)
 	m.start_flight(0)
 	check(not m.balloon.deflating and is_equal_approx(m.balloon.env_node.scale.y, 1.0), "a new flight inflates it again")
+
+	# ---- 7g. flight audio: burner roar, wind per layer, creak, thunder, tool sounds ----
+	print("7g. flight audio")
+	DebugFlags.parse([])
+	sv.reset_all()
+	m.start_flight(0)
+	m.set_process(true)
+	m.lanes.setup(3.0, false, 12, 1)
+	clear_sky(m)
+	var au = m.sfx
+	m.balloon.set_altitude(900.0)
+	step(m, 0.3, 0)
+	check(au.burner_target < -70.0, "no roar while the burner is off")
+	step(m, 1.5, 1)
+	check(au.burner_target > -20.0, "the burner roars while it fires (%.0f dB)" % au.burner_target)
+	au.fly(0.0, 0.0, 1.0, 60.0, 0.0, false)
+	var au_calm: float = au.wind_target
+	au.fly(0.0, 0.0, 1.0, 280.0, 0.0, false)
+	var au_gale: float = au.wind_target
+	check(au_gale > au_calm + 10.0, "stronger wind is louder (%.0f -> %.0f dB)" % [au_calm, au_gale])
+	var au_plays: int = au.plays["creak"]
+	for i in 6:
+		m.balloon._swing_v = 4.0
+		step(m, 1.5, 0)
+	check(au.plays["creak"] > au_plays, "a swinging basket creaks (%d)" % (au.plays["creak"] - au_plays))
+	m.pause_game()
+	check(au.burner_target < -70.0 and au.wind_target < -70.0, "pausing silences the flight loops")
+	m.resume_game()
+	var au_t: int = au.plays["thunder"]
+	m.lanes.lt_state = 2
+	m._lt_prev = 0
+	step(m, 0.05, 0)
+	check(au.plays["thunder"] >= au_t, "lightning has thunder")
+	m.balloon.set_altitude(900.0)
+	m.tool_avail = [0, 1, 2]
+	m.tool_charges = [3, 3, 3]
+	var au_s: int = au.plays["thunk"]
+	m.use_tool(0)
+	check(au.plays["thunk"] == au_s + 1, "the sandbag thumps")
 
 	# ---- 8. restart in place ----
 	print("8. restart in place")
