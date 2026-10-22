@@ -28,7 +28,7 @@ const RING_MAX := 8            # pooled expanding rings (pickups, handoffs, land
 const MAX_COINS := MAX_LANES
 const MAX_STARS := 5
 ## Precision Landing: the airship's deck (its top surface) and hull, and the range it drifts over.
-const SHIP_DECK_Y := 250.0
+const SHIP_DECK_Y := 380.0
 const SHIP_HULL_H := 56.0
 const SHIP_MIN_X := 270.0
 const SHIP_MAX_X := 810.0
